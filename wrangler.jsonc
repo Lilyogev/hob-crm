@@ -1,0 +1,45 @@
+// hob CRM: the partners' own Cloudflare account. Every resource here is new
+// and named hob-crm-*; never reuse an id from segula-board or shay-crm.
+// database_id is filled in after `wrangler d1 create hob-crm-db` (see DEPLOY.md).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hob-crm",
+  "main": "dist/server/server.js",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  },
+
+  "vars": {
+    "APP_ENV": "production",
+    // Web Push public key. Generate a pair with `node scripts/vapid-keys.mjs`;
+    // the private half goes in as a secret (VAPID_PRIVATE_JWK).
+    "VAPID_PUBLIC_KEY": ""
+  },
+
+  "workers_dev": true,
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hob-crm-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [{ "binding": "STORAGE", "bucket_name": "hob-crm-files" }],
+
+  // Workers AI: Whisper transcription for the voice button in Hobi's chat.
+  "ai": { "binding": "AI" },
+
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "SummaryAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SummaryAgent"] }]
+}

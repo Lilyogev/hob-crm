@@ -1,0 +1,132 @@
+/* Google Fonts (Assistant / Rubik / IBM Plex Mono) load from a <link> in
+ * src/routes/__root.tsx — a CSS @import here blocked rendering until the
+ * whole stylesheet had arrived. */
+@import "tailwindcss" source(none);
+@source "../src";
+
+/* Plain Tailwind utilities plus the --hob-* tokens below; no UI kit.
+ * `--spacing: 0.25rem` keeps the p-4 / gap-2 / h-10 scale; the radius
+ * aliases keep rounded-lg at 10px. */
+/* ivory: = the light theme (html.ivory), for the few colours that need a
+ * darker shade on a light ground (amber text on an amber tint). */
+@custom-variant ivory (&:where(html.ivory, html.ivory *));
+
+@theme {
+  --spacing: 0.25rem;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+:root {
+  --radius: 0.625rem;
+}
+
+/* ---- hob tokens: cream paper and dark-brown ink, straight from the logo.
+ * Light (html.ivory) is the default; dark is the 🌓 option. Every component
+ * consumes only these variables. Status / priority / owner colours stay
+ * literal on purpose: that is the language the partners know from Monday.
+ * The top bar is brown in both modes: the brand anchor. */
+:root {
+  --hob-bg: #1a1714;
+  --hob-bg2: #201c18;
+  --hob-nav: #4f463c;
+  --hob-surface: #262019;
+  --hob-ink: #f3ece0;
+  --hob-soft: #b3a99b;
+  --hob-faint: #7d7368;
+  --hob-rule: rgba(250, 246, 233, 0.1);
+  --hob-rule-strong: rgba(250, 246, 233, 0.16);
+  --hob-hover: rgba(250, 246, 233, 0.05);
+  --hob-accent: #e8dfcc;
+  --hob-accent-fg: #1a1714;
+  --hob-accent-hover: #d1c6b0;
+  --hob-good: #3cbf85;
+  --hob-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+html.ivory {
+  --hob-bg: #faf6e9;
+  --hob-bg2: #f3eddc;
+  --hob-nav: #4f463c;
+  --hob-surface: #fffdf7;
+  --hob-ink: #4f463c;
+  --hob-soft: #7d7369;
+  --hob-faint: #a89e92;
+  --hob-rule: rgba(79, 70, 60, 0.12);
+  --hob-rule-strong: rgba(79, 70, 60, 0.2);
+  --hob-hover: rgba(79, 70, 60, 0.05);
+  --hob-accent: #4f463c;
+  --hob-accent-fg: #faf6e9;
+  --hob-accent-hover: #6a5f52;
+  --hob-good: #2e7d4f;
+}
+
+/* hob board: Hebrew-first, Assistant carries the product, mono for money. */
+@layer base {
+  html {
+    background-color: var(--hob-bg);
+    color: var(--hob-ink);
+    color-scheme: dark;
+  }
+  html.ivory {
+    color-scheme: light;
+  }
+
+  body {
+    min-height: 100vh;
+    background-color: var(--hob-bg);
+    color: var(--hob-ink);
+    font-family: "Assistant", "Rubik", "Segoe UI", system-ui, -apple-system, sans-serif;
+    background-image: radial-gradient(900px 400px at 75% -150px, rgba(255, 255, 255, 0.045), transparent 70%);
+    transition: background-color 0.25s;
+  }
+  html.ivory body {
+    background-image: radial-gradient(900px 400px at 75% -150px, rgba(0, 0, 0, 0.04), transparent 70%);
+  }
+
+  * {
+    border-color: var(--hob-rule-strong);
+  }
+}
+
+/* כל סכום כסף עובר דרך .dm (מצב ההדגמה) — נקודת עגינה מושלמת למונו */
+.dm {
+  font-family: var(--hob-mono);
+}
+.hob-mono {
+  font-family: var(--hob-mono);
+}
+
+/* 🥷 מצב הדגמה — כמו בדשבורד האישי: המספרים נשארים במקום, מרוחים בטשטוש
+ * כבד על פס ירוק. demo.ts מדליק את המחלקה על <body>; רכיבי הכסף תמיד
+ * מסמנים .dm (סכום בודד) או .dm-block (משפט שלם עם סכומים בפנים). */
+body.hob-demo .dm,
+body.hob-demo .dm-block {
+  filter: blur(0.45em); /* נגזר מגודל הטקסט — גם כותרות ענק נמרחות לגמרי */
+  user-select: none;
+  pointer-events: none;
+}
+body.hob-demo .dm {
+  background: rgba(22, 163, 74, 0.16);
+  border-radius: 6px;
+  padding: 0 6px;
+}
+
+/* הסימולטור מוחרג ממצב הדגמה בכוונה — ככה מראים איך הכלי עובד בלי
+ * לחשוף את מספרי העסק האמיתיים (יומן, מלאי, מכירות — כן מטושטשים). */
+body.hob-demo .hob-nodemo .dm,
+body.hob-demo .hob-nodemo .dm-block {
+  filter: none;
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  user-select: auto;
+  pointer-events: auto;
+}
