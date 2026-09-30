@@ -9,9 +9,10 @@
 // movement into the board's ledger. Dedupe is by the "Shopify #<n>" note so
 // webhook retries can't double-log an order.
 import type { D1Database } from "@cloudflare/workers-types";
+import { attributeCollabSale } from "./collab.server";
 import { notify } from "./notify.server";
 import type { PushEnv } from "./push.server";
-import { adjustStock, normSize } from "./seeding.server";
+import { adjustStock, normSize, shopifyStockLocation } from "./seeding.server";
 
 type SyncEnv = PushEnv & { DB?: D1Database };
 
@@ -90,19 +91,6 @@ export async function settingPut(db: D1Database, key: string, value: string): Pr
     )
     .bind(key, value)
     .run();
-}
-
-// Where a store order leaves stock from: settings.shopify_stock_location,
-// one of the partners' keys (src/lib/partners.ts). Default: Avia.
-export const DEFAULT_STOCK_LOCATION = "avia";
-
-export async function shopifyStockLocation(db: D1Database): Promise<string> {
-  try {
-    const v = (await settingGet(db, "shopify_stock_location")) ?? "";
-    return v.trim() || DEFAULT_STOCK_LOCATION;
-  } catch {
-    return DEFAULT_STOCK_LOCATION;
-  }
 }
 
 // A line in Hobi's thread. kind 'note' = board notification the model never
@@ -385,45 +373,4 @@ export async function handleShopifyOrder(
   return noteOk
     ? `ok: ${orderNo} logged (${lines.length} lines, ${unmatched} unmatched)`
     : "logged, delivery failed: board thread write failed";
-}
-
-// A collab influencer's personal discount code on an order = her sale. The
-// order_key UNIQUE constraint makes webhook retries harmless, and the note
-// gives the partners the leaderboard moment in real time. Reads the collab
-// module's tables directly; if that module is absent this is a silent no-op.
-async function attributeCollabSale(
-  db: D1Database,
-  order: ShopifyOrderPayload,
-  orderNo: string,
-): Promise<void> {
-  try {
-    const codes = (order.discount_codes ?? [])
-      .map((d) => (d.code ?? "").trim().toUpperCase())
-      .filter(Boolean);
-    if (!codes.length) return;
-    for (const code of codes) {
-      const link = await db
-        .prepare("SELECT id, name FROM collab_links WHERE UPPER(discount_code) = ?")
-        .bind(code)
-        .first<{ id: number; name: string }>();
-      if (!link) continue;
-      const total = Number(order.total_price ?? 0) || 0;
-      const res = await db
-        .prepare(
-          "INSERT OR IGNORE INTO collab_sales (link_id, order_key, order_name, total) VALUES (?, ?, ?, ?)",
-        )
-        .bind(link.id, String(order.id ?? orderNo), orderNo, total)
-        .run();
-      if (res.meta.changes > 0) {
-        await postThreadNote(
-          db,
-          `💸 מכירה דרך משפיענית! ${link.name} הביאה הזמנה (${orderNo}, ₪${Math.round(total)}) עם הקוד ${code}. הליגה מתעדכנת בטאב המשפיעניות.`,
-          "note",
-        );
-      }
-      return;
-    }
-  } catch {
-    // Attribution must never fail the order logging itself.
-  }
 }

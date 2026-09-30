@@ -5,15 +5,8 @@
 // settings.shop_domain; credentials are the Worker secrets
 // SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET (see SHOPIFY.md).
 import type { D1Database } from "@cloudflare/workers-types";
-import { normSize } from "./seeding.server";
-import {
-  matchItem,
-  postThreadNote,
-  settingGet,
-  settingPut,
-  shopifyStockLocation,
-  sizeFromVariant,
-} from "./shopify-sync.server";
+import { normSize, shopifyStockLocation } from "./seeding.server";
+import { matchItem, postThreadNote, settingGet, settingPut, sizeFromVariant } from "./shopify-sync.server";
 
 const API_VERSION = "2025-01";
 // shopifyqlQuery only exists from Admin API 2025-10, so analytics calls pin

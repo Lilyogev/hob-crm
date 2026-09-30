@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { matchItem, sizeFromVariant } from "../src/lib/shopify-sync.server";
+import { freshDb } from "./d1";
+import { handleShopifyOrder, matchItem, sizeFromVariant } from "../src/lib/shopify-sync.server";
 
 // Board items as a small clothing catalogue would name them (they mirror the
 // store titles). Generic sample data, not real inventory.
@@ -47,4 +48,40 @@ test("size comes out of the variant title in either position", () => {
   expect(sizeFromVariant("2XL")).toBe("XXL");
   expect(sizeFromVariant("One size")).toBe("");
   expect(sizeFromVariant(null)).toBe("");
+});
+
+// End to end against the real migrations: an orders/create payload becomes a
+// ledger row, leaves the configured partner's stock, posts a note, dedupes.
+test("a store order is logged once, leaves stock and posts a note", async () => {
+  const db = freshDb();
+  await db.prepare("INSERT INTO seed_items (id, name, size) VALUES (1, 'שמלה · LUNA · שחורה', '')").run();
+  await db.prepare("INSERT INTO seed_stock (item_id, location, qty_m) VALUES (1, 'avia', 5)").run();
+  const order = {
+    id: 99,
+    name: "#1001",
+    created_at: "2026-09-30T10:00:00Z",
+    total_price: "299.00",
+    customer: { first_name: "דנה", last_name: "כהן" },
+    shipping_address: { address1: "הרצל 1", city: "תל אביב", phone: "050" },
+    line_items: [{ title: "שמלה · LUNA · שחורה", variant_title: "שחור / M", quantity: 1, price: "299.00" }],
+  };
+  const first = await handleShopifyOrder({ DB: db as never }, order);
+  expect(first.startsWith("ok:")).toBe(true);
+  const sale = await db.prepare("SELECT * FROM seed_sales").first<Record<string, unknown>>();
+  expect(sale?.pay_method).toBe("shopify");
+  expect(sale?.location).toBe("avia");
+  expect(sale?.handled_by).toBe("");
+  expect(sale?.item_id).toBe(1);
+  expect(sale?.order_ref).toBe("#1001");
+  expect(sale?.delivery).toBe("ship");
+  const stock = await db.prepare("SELECT qty_m FROM seed_stock WHERE item_id = 1 AND location = 'avia'").first<{ qty_m: number }>();
+  expect(stock?.qty_m).toBe(4);
+  const note = await db.prepare("SELECT kind, content FROM assistant_chat ORDER BY id DESC LIMIT 1").first<{ kind: string; content: string }>();
+  expect(note?.kind).toBe("note");
+  expect(note?.content).toContain("#1001");
+  // A webhook retry never double-logs, and a synced order never queues a push.
+  const again = await handleShopifyOrder({ DB: db as never }, order);
+  expect(again.startsWith("duplicate")).toBe(true);
+  const queued = await db.prepare("SELECT COUNT(*) AS c FROM shopify_push_queue").first<{ c: number }>();
+  expect(queued?.c).toBe(0);
 });

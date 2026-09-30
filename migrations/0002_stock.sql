@@ -17,6 +17,13 @@ CREATE TABLE IF NOT EXISTS seed_items (
   image TEXT NOT NULL DEFAULT '',
   web_status TEXT NOT NULL DEFAULT 'listed',   -- listed | physical_only
   web_reason TEXT NOT NULL DEFAULT '',
+  -- Quantity received from the supplier, for the stock reconciliation
+  -- (left + sold + given vs received). NULL = not recorded yet. Only
+  -- 'confirmed' (checked against an invoice / delivery note) counts as verified.
+  received_qty INTEGER,
+  received_source TEXT NOT NULL DEFAULT '',
+  received_status TEXT NOT NULL DEFAULT 'pending',   -- pending | confirmed
+  received_at TEXT NOT NULL DEFAULT '',              -- YYYY-MM-DD the quantity is as of
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

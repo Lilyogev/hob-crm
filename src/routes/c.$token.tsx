@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { renderCollabNotFound, renderCollabPage } from "../lib/collab.page";
-import { countLinkView, linkByToken } from "../lib/collab.server";
+import { collabSettings, countLinkView, linkByToken } from "../lib/collab.server";
 import {
   clientIp,
   isAuthed,
@@ -19,14 +19,16 @@ export const Route = createFileRoute("/c/$token")({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        const token = new URL(request.url).pathname.split("/").filter(Boolean).pop() ?? "";
+        const url = new URL(request.url);
+        const token = url.pathname.split("/").filter(Boolean).pop() ?? "";
+        const settings = await collabSettings(url.origin);
         const missKey = `miss:${clientIp(request)}`;
         const found = (await rateLocked(missKey, MISS_LIMIT, MISS_WINDOW_MIN))
           ? null
           : await linkByToken(token);
         if (!found) {
           await rateHit(missKey, MISS_WINDOW_MIN);
-          return new Response(renderCollabNotFound(), {
+          return new Response(renderCollabNotFound(settings), {
             status: 404,
             headers: { "content-type": "text/html; charset=utf-8" },
           });
@@ -35,13 +37,16 @@ export const Route = createFileRoute("/c/$token")({
         // chat-app link previews must not pollute the "נפתח X×" signal —
         // count real strangers only.
         if (!isPreviewBot(request) && !(await isAuthed(request))) await countLinkView(token);
-        return new Response(renderCollabPage(found.link, found.campaign, found.product, found.products, found.offers), {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-store",
-            "x-robots-tag": "noindex",
+        return new Response(
+          renderCollabPage(settings, found.link, found.campaign, found.product, found.products, found.offers),
+          {
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "cache-control": "no-store",
+              "x-robots-tag": "noindex",
+            },
           },
-        });
+        );
       },
     },
   },

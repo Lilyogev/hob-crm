@@ -1,51 +1,71 @@
-// 🤖 The Bruno tab: chat with the assistant inside the board itself. Born the
-// day Telegram banned the Segula community (Aug 19, 2026) — same brain and
-// history table, but the only door is the board's authed session: no bot
-// username, no webhook, nothing a stranger can find or report.
+// הטאב "הובי": הצ'אט עם העוזרת בתוך הלוח. מסך מלא בטלפון, כרטיס ממורכז במחשב.
+// סקירה כל 12 שניות (הודעות של השותפה השנייה מופיעות לבד), 📷 לקבלה, מיקרופון
+// לתמלול, וכרטיסי "מחכה לאישור" לפקודות קוליות שמשנות כסף, מלאי או משלוח.
 import { useEffect, useRef, useState } from "react";
-
-import { type ConfirmTransport, type Held, resolveConfirm } from "./held-logic";
-import { toast } from "./toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { isPartner, PARTNER, partnerLabel } from "../../lib/partners";
+import { toast } from "./toast";
+import { useRecorder } from "./use-recorder";
 
-type ChatMessage = { id: number; role: string; content: string; created_at: string };
-
-type Thread = { messages: ChatMessage[]; pending: Held[] };
+type ChatMessage = { id: number; role: string; content: string; kind: string; actor: string; created_at: string };
+type Held = { id: number; summary: string; state: "pending" | "unknown"; note?: string };
+type Thread = { me: string; messages: ChatMessage[]; pending: Held[] };
 
 async function fetchThread(): Promise<Thread> {
   const res = await fetch("/api/assistant/chat");
   if (res.status === 401) throw new Error("unauthorized");
   if (!res.ok) throw new Error(`http ${res.status}`);
-  const data = (await res.json()) as { messages?: ChatMessage[]; pending?: Held[] };
-  return { messages: data.messages ?? [], pending: data.pending ?? [] };
+  const data = (await res.json()) as { me?: string; messages?: ChatMessage[]; pending?: Held[] };
+  return { me: data.me ?? "", messages: data.messages ?? [], pending: data.pending ?? [] };
 }
 
-export const confirmTransport: ConfirmTransport = {
-  confirm: async (id, approve, edits) => {
-    const res = await fetch("/api/assistant/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: id, approve, ...(edits ? { edits } : {}) }) });
-    if (res.status === 401) throw new Error("unauthorized");
-    if (!res.ok) throw new Error(`http ${res.status}`);
-    return (await res.json()) as { ok: boolean; status: string; text: string };
-  },
-  status: async (id) => {
-    const res = await fetch(`/api/assistant/chat?pending_id=${id}`);
-    if (!res.ok) throw new Error(`http ${res.status}`);
-    return ((await res.json()) as { pending_status: { status: string; text: string } | null }).pending_status;
-  },
+// ---- אישורים: כרטיס יורד מהמסך רק כשהשרת אישר מצב סופי. בקשה שנפלה לא מורידה
+// אותו, ולפני ניסיון נוסף שואלים את השרת מה קרה.
+const FINAL = new Set(["done", "cancelled", "expired", "failed", "closed", "not_found"]);
+const NOTE: Record<string, string> = {
+  in_progress: "הפעולה בביצוע עכשיו. לא שלחתי שוב.",
+  executing: "הפעולה בביצוע עכשיו. לא שלחתי שוב.",
+  unknown: "הביצוע נקטע באמצע ולא ידוע אם נרשם. בדקו ביומן לפני בקשה חוזרת.",
+  pending: "הבקשה לא הגיעה לשרת והפעולה לא בוצעה. אפשר ללחוץ שוב.",
 };
 
-/** User turns are stored as "יוגב: text" — split the speaker back out. */
+async function resolveConfirm(id: number, approve: boolean): Promise<{ remove: boolean; toast: string; note?: string; state?: Held["state"] }> {
+  let reply: { ok: boolean; status: string; text: string } | null = null;
+  try {
+    const res = await fetch("/api/assistant/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: id, approve }) });
+    if (res.status === 401) throw new Error("unauthorized");
+    reply = res.ok ? ((await res.json()) as { ok: boolean; status: string; text: string }) : null;
+  } catch (error) {
+    if ((error as Error).message === "unauthorized") throw error;
+    reply = null;
+  }
+  let status = reply?.status ?? "";
+  let text = reply?.text ?? "";
+  if (!reply || !status || status === "error") {
+    try {
+      const res = await fetch(`/api/assistant/chat?pending_id=${id}`);
+      const now = res.ok ? ((await res.json()) as { pending_status: { status: string; text: string } | null }).pending_status : null;
+      status = now?.status ?? "";
+      text = now?.text ?? text;
+    } catch {
+      status = "";
+    }
+    if (!status) return { remove: false, toast: "אין תשובה מהשרת. הכרטיס נשאר, ולא ידוע אם הפעולה בוצעה.", note: "אין חיבור לשרת. לא ידוע אם בוצע." };
+  }
+  if (FINAL.has(status)) {
+    const msg = status === "done" ? text || "בוצע" : status === "cancelled" ? "בוטל, לא בוצע כלום" : status === "expired" ? "פג תוקף האישור. אמרו שוב את הפקודה." : status === "failed" ? text || "הפעולה נכשלה ולא בוצעה" : status === "not_found" ? "הפעולה לא נמצאה. כלום לא בוצע." : "נסגר";
+    return { remove: true, toast: msg };
+  }
+  return { remove: false, toast: NOTE[status] ?? "הפעולה עוד לא הושלמה", note: NOTE[status] ?? "", state: status === "unknown" ? "unknown" : "pending" };
+}
+
+/** תור של שותפה נשמר כ"אביה: טקסט"; מפרידים את השם חזרה. */
 function splitSpeaker(content: string): { speaker: string; text: string } {
-  const m = /^(יוגב|דימה|שותף): ([\s\S]*)$/.exec(content);
+  const m = /^([^:\n]{1,20}): ([\s\S]*)$/.exec(content);
   return m ? { speaker: m[1], text: m[2] } : { speaker: "", text: content };
 }
 
-/**
- * Phone photos arrive at 4-8MB; the vision API caps an image at ~5MB and R2
- * shouldn't hoard originals anyway. Downscale to max 1600px JPEG before
- * upload. Falls back to the original file when decoding fails (e.g. HEIC on
- * an old browser) — the server rejects anything over 6MB with a clear error.
- */
+/** תמונות מהטלפון מגיעות ב-4-8MB; מקטינים ל-1600px JPEG לפני ההעלאה. */
 async function shrinkImage(file: File): Promise<Blob> {
   try {
     const bitmap = await createImageBitmap(file);
@@ -58,9 +78,7 @@ async function shrinkImage(file: File): Promise<Blob> {
     const ctx = canvas.getContext("2d");
     if (!ctx) return file;
     ctx.drawImage(bitmap, 0, 0, w, h);
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.85),
-    );
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
     return blob ?? file;
   } catch {
     return file;
@@ -68,37 +86,28 @@ async function shrinkImage(file: File): Promise<Blob> {
 }
 
 function timeLabel(createdAt: string): string {
-  // D1 stores UTC "YYYY-MM-DD HH:MM:SS" — render in the viewer's local time.
-  const d = new Date(createdAt.replace(" ", "T") + "Z");
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
+  const d = new Date(`${createdAt.replace(" ", "T")}Z`);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
 }
 
 function dayLabel(createdAt: string): string {
-  const d = new Date(createdAt.replace(" ", "T") + "Z");
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("he-IL", { day: "numeric", month: "numeric" });
+  const d = new Date(`${createdAt.replace(" ", "T")}Z`);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("he-IL", { day: "numeric", month: "numeric" });
 }
 
-// Bruno answers with **bold** markers; show them as bold instead of asterisks.
+// **מודגש** מהמודל מוצג מודגש; "# כותרת" הופכת לשורה מודגשת.
 function renderBold(raw: string) {
-  // "# כותרת" / "## כותרת" מהמודל הופכות לשורה מודגשת בלי הסולמית.
   const text = raw.replace(/^#{1,4}\s+(.+)$/gm, "**$1**");
-  return text.split(/(\*\*[^*\n]+\*\*)/g).map((part, i) =>
-    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={i}>{part.slice(2, -2)}</strong> : part,
-  );
+  return text.split(/(\*\*[^*\n]+\*\*)/g).map((part, i) => (part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={i}>{part.slice(2, -2)}</strong> : part));
 }
 
-// Bruno's briefs run long (stock lists, stuck orders). Past ~9 lines an older
-// message folds to a preview with "הצג הכל", so the thread reads as a chat and
-// not as a wall; the newest message always opens in full.
-export function LongText({ text, startOpen = false, user = false, compact = false }: { text: string; startOpen?: boolean; user?: boolean; compact?: boolean }) {
-  // compact (דוחות של עובדים): מקופל כבר אחרי כ-4 שורות, כדי שהמסך לא יהיה קיר טקסט.
-  const long = compact ? text.length > 220 || text.split("\n").length > 4 : text.length > 520 || text.split("\n").length > 9;
+/** הודעה ארוכה מתקפלת אחרי כ-9 שורות עם "הצג הכל"; האחרונה תמיד פתוחה. */
+export function LongText({ text, startOpen = false, user = false }: { text: string; startOpen?: boolean; user?: boolean }) {
+  const long = text.length > 520 || text.split("\n").length > 9;
   const [open, setOpen] = useState(startOpen || !long);
   return (
     <div className={user ? "" : "text-[var(--hob-ink)]"}>
-      <div className={open ? "" : `relative ${compact ? "max-h-[5.2em]" : "max-h-[9.5em]"} overflow-hidden`}>
+      <div className={open ? "" : "relative max-h-[9.5em] overflow-hidden"}>
         {renderBold(text)}
         {!open && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[var(--hob-bg)] to-transparent" />}
       </div>
@@ -111,6 +120,19 @@ export function LongText({ text, startOpen = false, user = false, compact = fals
   );
 }
 
+/** האווטאר של הובי: עיגול "h" בצבע ההדגשה. */
+function HobiAvatar({ size = 36 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="flex shrink-0 items-center justify-center rounded-full bg-[var(--hob-accent)] font-semibold lowercase text-[var(--hob-accent-fg)]"
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.55), fontFamily: "var(--hob-mono)" }}
+    >
+      h
+    </span>
+  );
+}
+
 export function AssistantChatView({
   actor,
   onAuthLost,
@@ -118,20 +140,21 @@ export function AssistantChatView({
   embedded,
   onClose,
 }: {
+  /** מי שמחוברת ('avia' | 'lior'), לצביעת הבועות בלבד. השרת קובע את הכותבת מהסשן. */
   actor: string;
   onAuthLost: () => void;
-  /** Reports the highest message id on screen — clears the nav unread badge. */
+  /** מזהה ההודעה הגבוה ביותר שמוצג, לניקוי התג על הטאב. */
   onSeen?: (maxId: number) => void;
-  /** Embedded under the team tree (the unified ברונו tab): shorter panel. */
+  /** בתוך המעטפת של הלוח: מסך מלא בטלפון, כרטיס במחשב. */
   embedded?: boolean;
-  /** Embedded only: the "back to the team" button in the chat header. */
+  /** כפתור חזרה בכותרת (בטלפון, כשהצ'אט מכסה את הניווט). */
   onClose?: () => void;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ["bruno-chat"],
+    queryKey: ["hobi-chat"],
     queryFn: fetchThread,
-    refetchInterval: 12_000, // the other partner's messages appear like on the board
+    refetchInterval: 12_000,
     refetchOnWindowFocus: true,
     retry: (count, error) => error.message !== "unauthorized" && count < 2,
   });
@@ -139,165 +162,71 @@ export function AssistantChatView({
     if (query.error?.message === "unauthorized") onAuthLost();
   }, [query.error, onAuthLost]);
 
+  const me = query.data?.me || actor;
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<Record<number, string>>({});
-  // Optimistic bubbles for a message in flight: Bruno can take 10-30s when he
-  // uses tools, and a silent wait reads as a crash (learned that the hard way).
+  // בועה זמנית להודעה בדרך: הובי לוקחת 10-30 שניות כשהיא משתמשת בכלים.
   const [pending, setPending] = useState<string | null>(null);
   // התשובה המיידית של התור שרץ עכשיו (בועה זמנית, לא נשמרת בשרשור).
   const [quick, setQuick] = useState<string | null>(null);
   const [sendError, setSendError] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const messages = query.data?.messages ?? [];
 
-  // Follow the conversation only when the reader is already at (or near)
-  // the bottom, or just sent something. A poll landing while someone reads
-  // last week's brief used to yank them down every 12 seconds — and
-  // scrollIntoView scrolled the whole page along with it.
+  // עוקבים אחרי השיחה רק כשהקוראת כבר למטה או שלחה משהו.
   const stickToBottom = useRef(true);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     if (pending || stickToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [messages.length, pending]);
+  }, [messages.length, pending, quick]);
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
-  // Everything rendered = everything seen; clears the nav badge.
   const maxId = messages.length ? messages[messages.length - 1].id : 0;
   useEffect(() => {
     if (maxId > 0) onSeen?.(maxId);
   }, [maxId, onSeen]);
 
-  // ---- קול: מיקרופון (זיהוי הדיבור של הדפדפן, עברית, בלי עלות) + הקראה של
-  // התשובה. בשביל לדבר עם ברונו כשהידיים תפוסות (אריזה, נהיגה). דפדפן בלי
-  // תמיכה פשוט לא מציג את הכפתור.
-  // פעולות שמחכות לאישור אחרי פקודה קולית: מוצג בדיוק מה ייעשה, ורק "אשר" מבצע.
-  // הרשימה מגיעה מהשרת עם השרשור (שורדת רענון ומכשיר אחר). notes = הערה מקומית
-  // לכרטיס שניסיון האישור שלו לא הושלם.
   const held: Held[] = (query.data?.pending ?? []).map((h) => ({ ...h, note: notes[h.id] ?? h.note }));
   const [confirming, setConfirming] = useState(false);
   async function answerHeld(id: number, approve: boolean) {
-    if (confirming) return; // לחיצה כפולה לא שולחת פעמיים (והשרת ממילא מבצע פעם אחת)
+    if (confirming) return;
     setConfirming(true);
     try {
-      const out = await resolveConfirm(confirmTransport, id, approve);
-      toast(out.toast);
-      setNotes((cur) => ({ ...cur, [id]: out.remove ? "" : (out.card?.note ?? "") }));
-      await queryClient.invalidateQueries({ queryKey: ["bruno-chat"] });
+      const out = await resolveConfirm(id, approve);
+      toast(out.toast, out.remove ? "ok" : "error");
+      setNotes((cur) => ({ ...cur, [id]: out.remove ? "" : (out.note ?? "") }));
+      await queryClient.invalidateQueries({ queryKey: ["hobi-chat"] });
+    } catch (error) {
+      if ((error as Error).message === "unauthorized") onAuthLost();
     } finally {
       setConfirming(false);
     }
   }
   async function closeUnknown(id: number) {
     await fetch("/api/assistant/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ close_unknown: id }) });
-    await queryClient.invalidateQueries({ queryKey: ["bruno-chat"] });
+    await queryClient.invalidateQueries({ queryKey: ["hobi-chat"] });
   }
-  const recRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const stopTimer = useRef<number | null>(null);
-  const [listening, setListening] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [voiceOk, setVoiceOk] = useState(false);
-  const [voiceError, setVoiceError] = useState("");
-  const [speakOn, setSpeakOn] = useState(false);
-  const speakRef = useRef(false);
-  useEffect(() => {
-    setVoiceOk(typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia));
-    try {
-      const on = localStorage.getItem("hob_bruno_speak") === "1";
-      setSpeakOn(on);
-      speakRef.current = on;
-    } catch {
-      /* private mode */
-    }
-    return () => {
-      if (recRef.current && recRef.current.state !== "inactive") recRef.current.stop();
-      window.speechSynthesis?.cancel();
-    };
-  }, []);
-  function speak(text: string) {
-    if (!("speechSynthesis" in window)) return;
-    const clean = text.replace(/\*\*/g, "").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").replace(/#\d+/g, "").slice(0, 900);
-    const u = new SpeechSynthesisUtterance(clean);
-    u.lang = "he-IL";
-    const he = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith("he"));
-    if (he) u.voice = he;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
-  }
-  function toggleSpeak() {
-    const next = !speakOn;
-    setSpeakOn(next);
-    speakRef.current = next;
-    if (!next) window.speechSynthesis?.cancel();
-    try {
-      localStorage.setItem("hob_bruno_speak", next ? "1" : "0");
-    } catch {
-      /* private mode */
-    }
-  }
-  // הקלטה במכשיר (MediaRecorder) ותמלול בשרת (Whisper). לחיצה מתחילה, לחיצה
-  // שנייה עוצרת, מתמללת ושולחת. עוצר לבד אחרי 60 שניות.
-  async function toggleMic() {
-    if (listening) {
-      recRef.current?.stop();
-      return;
-    }
-    setVoiceError("");
-    window.speechSynthesis?.cancel();
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      setVoiceError("אין גישה למיקרופון. אשר אותה בהגדרות הדפדפן של המכשיר.");
-      return;
-    }
-    const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    chunksRef.current = [];
-    rec.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    rec.onstop = async () => {
-      if (stopTimer.current) window.clearTimeout(stopTimer.current);
-      stream.getTracks().forEach((t) => t.stop());
-      setListening(false);
-      const blob = new Blob(chunksRef.current, { type: rec.mimeType || mime || "audio/mp4" });
-      if (blob.size < 1500) return;
-      setTranscribing(true);
-      try {
-        const res = await fetch("/api/transcribe", { method: "POST", headers: { "content-type": blob.type }, body: blob });
-        if (res.status === 401) return onAuthLost();
-        const data = (await res.json().catch(() => null)) as { ok?: boolean; text?: string } | null;
-        const said = (data?.text ?? "").trim();
-        if (!res.ok || !said) setVoiceError("לא הצלחתי להבין את ההקלטה. נסה שוב, קרוב יותר למיקרופון.");
-        else await send(said);
-      } catch {
-        setVoiceError("התמלול נכשל. בדוק חיבור ונסה שוב.");
-      } finally {
-        setTranscribing(false);
-      }
-    };
-    recRef.current = rec;
-    rec.start();
-    setListening(true);
-    stopTimer.current = window.setTimeout(() => rec.state !== "inactive" && rec.stop(), 60_000);
-  }
+
+  // קול: הקלטה במכשיר, תמלול בשרת, ושליחה עם voice:true (פעולות על כסף/מלאי/משלוח מחכות לאישור).
+  const rec = useRecorder(
+    (text) => void send(text),
+    (message) => (message === "unauthorized" ? onAuthLost() : setVoiceError(message)),
+  );
 
   async function send(spoken?: string) {
     const text = (spoken ?? draft).trim();
     if (!text || pending !== null) return;
     setDraft("");
     setSendError(false);
+    setVoiceError("");
     setPending(text);
-    // שתי מהירויות: מזהה לתור, וסקר כל 0.7 שניות עד שהתשובה המלאה חוזרת. התשובה
-    // המיידית (בלי כלים ובלי נתונים) מוצגת כבועה אפורה זמנית ומוחלפת בתשובה האמיתית.
     const turn = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `t-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     let polling = true;
     const poll = async () => {
@@ -310,7 +239,7 @@ export function AssistantChatView({
           const out = (await r.json()) as { quick?: { text: string } | null };
           if (polling && out.quick?.text) setQuick(out.quick.text);
         } catch {
-          // תצוגה בלבד
+          // display only
         }
       }
     };
@@ -319,9 +248,7 @@ export function AssistantChatView({
       const res = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        // voice: true = ההודעה הגיעה מהמיקרופון. השרת לא מבצע ממנה פעולות שמשנות
-        // כסף, מלאי או משלוח בלי אישור (תמלול יכול לטעות במספר או בשם).
-        body: JSON.stringify({ text, actor, voice: Boolean(spoken), turn }),
+        body: JSON.stringify({ text, voice: Boolean(spoken), turn }),
       });
       polling = false;
       if (res.status === 401) {
@@ -329,12 +256,10 @@ export function AssistantChatView({
         return;
       }
       if (!res.ok) throw new Error(`http ${res.status}`);
-      const data = (await res.json().catch(() => null)) as { answer?: string; pending?: { id: number; summary: string }[] } | null;
-      if (speakRef.current && data?.answer) speak(data.answer);
-      await queryClient.invalidateQueries({ queryKey: ["bruno-chat"] });
+      await queryClient.invalidateQueries({ queryKey: ["hobi-chat"] });
     } catch {
       setSendError(true);
-      setDraft(text); // give the message back instead of losing it
+      setDraft(text);
     } finally {
       polling = false;
       setQuick(null);
@@ -345,34 +270,26 @@ export function AssistantChatView({
   async function sendReceipt(file: File) {
     if (pending !== null) return;
     setSendError(false);
-    setPending("📎 קבלה נשלחת — ברונו קורא אותה…");
+    setPending("📎 קבלה נשלחת, הובי קוראת אותה…");
     try {
       const blob = await shrinkImage(file);
-      const res = await fetch(`/api/assistant/chat?actor=${encodeURIComponent(actor)}`, {
-        method: "POST",
-        headers: { "content-type": blob.type || "image/jpeg" },
-        body: blob,
-      });
+      const res = await fetch("/api/assistant/chat", { method: "POST", headers: { "content-type": blob.type || "image/jpeg" }, body: blob });
       if (res.status === 401) {
         onAuthLost();
         return;
       }
       if (!res.ok) throw new Error(`http ${res.status}`);
-      await queryClient.invalidateQueries({ queryKey: ["bruno-chat"] });
+      await queryClient.invalidateQueries({ queryKey: ["hobi-chat"] });
     } catch {
       setSendError(true);
     } finally {
       setPending(null);
-      if (fileRef.current) fileRef.current.value = ""; // allow re-sending the same photo
+      if (fileRef.current) fileRef.current.value = "";
     }
   }
 
-  const speakerColor: Record<string, string> = {
-    יוגב: "#0073ea",
-    דימה: "#a25ddc",
-    שותף: "#676879",
-  };
-
+  const colorOf = (key: string) => (isPartner(key) ? PARTNER[key].color : "var(--hob-soft)");
+  const myLabel = partnerLabel(me) || "שותפה";
   let lastDay = "";
   const lastId = messages.length ? messages[messages.length - 1].id : -1;
 
@@ -380,86 +297,64 @@ export function AssistantChatView({
     <div
       className={
         embedded
-          ? // בטלפון השיחה תופסת את כל המסך (מעל הניווט של הלוח, שגובהו כשליש מסך);
-            // במסך רחב היא פאנל רגיל מתחת לניווט.
-            "fixed inset-0 z-[60] flex flex-col bg-[var(--hob-surface)] pt-[env(safe-area-inset-top)] sm:static sm:z-auto sm:mx-auto sm:h-[calc(100dvh-150px)] sm:min-h-[420px] sm:max-w-3xl sm:overflow-hidden sm:rounded-2xl sm:border sm:border-[var(--hob-rule)] sm:pt-0 sm:shadow-sm"
-          : "mx-auto flex h-[calc(100dvh-190px)] min-h-[420px] max-w-3xl flex-col overflow-hidden rounded-2xl bg-[var(--hob-surface)] shadow-sm"
+          ? "fixed inset-0 z-[60] flex flex-col bg-[var(--hob-surface)] pt-[env(safe-area-inset-top)] sm:static sm:z-auto sm:mx-auto sm:h-[calc(100dvh-150px)] sm:min-h-[420px] sm:max-w-3xl sm:overflow-hidden sm:rounded-2xl sm:border sm:border-[var(--hob-rule)] sm:pt-0 sm:shadow-sm"
+          : "mx-auto flex h-[calc(100dvh-190px)] min-h-[420px] max-w-3xl flex-col overflow-hidden rounded-2xl border border-[var(--hob-rule)] bg-[var(--hob-surface)] shadow-sm"
       }
     >
-      {embedded && (
-        <div className="flex items-center gap-2.5 border-b border-[var(--hob-rule)] px-3.5 py-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full border-2 border-[var(--hob-accent)] bg-[var(--hob-bg)] text-lg">🤖</span>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-[var(--hob-ink)]">ברונו</div>
-            <div className="text-[11px] text-[var(--hob-faint)]">מנכ"ל · מחלק את העבודה לצוות</div>
-          </div>
-          {"speechSynthesis" in globalThis && (
-            <button
-              type="button"
-              onClick={toggleSpeak}
-              title={speakOn ? "ברונו מקריא את התשובות. לחיצה משתיקה" : "שברונו יקריא את התשובות בקול"}
-              aria-pressed={speakOn}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg border text-sm ${speakOn ? "border-[var(--hob-accent)] bg-[var(--hob-hover)]" : "border-[var(--hob-rule-strong)] opacity-60"}`}
-            >
-              {speakOn ? "🔊" : "🔈"}
-            </button>
-          )}
-          {onClose && (
-            <button type="button" onClick={onClose} className="rounded-lg border border-[var(--hob-rule-strong)] px-3 py-1.5 text-xs text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]">
-              חזרה לצוות
-            </button>
-          )}
+      <div className="flex items-center gap-2.5 border-b border-[var(--hob-rule)] px-3.5 py-2.5">
+        <HobiAvatar />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-[var(--hob-ink)]">הובי</div>
+          <div className="text-[11px] text-[var(--hob-faint)]">העוזרת הדיגיטלית של hob</div>
         </div>
-      )}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-        {query.isLoading && (
-          <div className="py-16 text-center text-[var(--hob-faint)]">טוען את השיחה…</div>
+        {onClose && (
+          <button type="button" onClick={onClose} className="rounded-lg border border-[var(--hob-rule-strong)] px-3 py-1.5 text-xs text-[var(--hob-ink)] hover:bg-[var(--hob-hover)] sm:hidden">
+            חזרה ללוח
+          </button>
         )}
+      </div>
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-3 py-4 sm:px-5">
+        {query.isLoading && <div className="py-16 text-center text-[var(--hob-faint)]">טוענת את השיחה…</div>}
         {!query.isLoading && messages.length === 0 && !pending && (
           <div className="py-16 text-center text-[var(--hob-faint)]">
-            <div className="mb-2 text-3xl">🤖</div>
-            זה הצ'אט עם ברונו — אותו ברונו, בלי טלגרם.
+            <div className="mb-3 flex justify-center">
+              <HobiAvatar size={48} />
+            </div>
+            היי, אני הובי, העוזרת הדיגיטלית של hob.
             <br />
-            אפשר לרשום מכירות והוצאות, לשאול על מלאי, יעדים ומשימות.
+            אפשר לרשום מכירות והוצאות, לשאול על מלאי ומשימות, ולצלם קבלה.
           </div>
         )}
         {messages.map((m) => {
           const isUser = m.role === "user";
-          const { speaker, text } = isUser
-            ? splitSpeaker(m.content)
-            : { speaker: "ברונו", text: m.content };
+          const isNote = m.kind === "note";
+          const { speaker, text } = isUser ? splitSpeaker(m.content) : { speaker: "הובי", text: m.content };
           const day = dayLabel(m.created_at);
           const showDay = day !== lastDay;
           lastDay = day;
-          const mine = isUser && speaker !== "" && actor !== "" &&
-            ((actor === "yogev" && speaker === "יוגב") || (actor === "dima" && speaker === "דימה"));
+          const mine = isUser && me !== "" && m.actor === me;
           return (
             <div key={m.id}>
               {showDay && (
                 <div className="my-3 text-center">
-                  <span className="rounded-full bg-[var(--hob-hover)] px-3 py-0.5 text-xs text-[var(--hob-soft)]">
-                    {day}
-                  </span>
+                  <span className="rounded-full bg-[var(--hob-hover)] px-3 py-0.5 text-xs text-[var(--hob-soft)]">{day}</span>
                 </div>
               )}
               <div dir="rtl" className={`mb-2.5 flex ${isUser ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-start text-sm leading-relaxed ${
                     isUser
-                      ? `max-w-[85%] sm:max-w-[70%] ${mine ? "bg-[#e3f0ff]" : "bg-[#f1e9fb]"} text-[#14142b]`
-                      : "w-full max-w-[94%] border border-[var(--hob-rule)] bg-[var(--hob-bg)] sm:max-w-[82%]"
+                      ? `max-w-[85%] border sm:max-w-[70%] ${mine ? "border-transparent bg-[var(--hob-bg2)]" : "border-[var(--hob-rule)] bg-[var(--hob-bg)]"} text-[var(--hob-ink)]`
+                      : isNote
+                        ? "w-full max-w-[94%] border border-dashed border-[var(--hob-rule-strong)] bg-[var(--hob-bg)] sm:max-w-[82%]"
+                        : "w-full max-w-[94%] border border-[var(--hob-rule)] bg-[var(--hob-bg)] sm:max-w-[82%]"
                   }`}
                 >
-                  <div
-                    className="mb-0.5 text-xs font-bold"
-                    style={{ color: isUser ? (speakerColor[speaker] ?? "#676879") : "var(--hob-soft)" }}
-                  >
-                    {isUser ? speaker || "שותף" : "🤖 ברונו"}
+                  <div className="mb-0.5 text-xs font-bold" style={{ color: isUser ? colorOf(m.actor) : "var(--hob-soft)" }}>
+                    {isUser ? speaker || partnerLabel(m.actor) || "שותפה" : isNote ? "עדכון מהלוח" : "הובי"}
                   </div>
                   <LongText text={text} startOpen={m.id === lastId} user={isUser} />
-                  <div className="mt-1 text-end text-[10px] text-[var(--hob-faint)]">
-                    {timeLabel(m.created_at)}
-                  </div>
+                  <div className="mt-1 text-end text-[10px] text-[var(--hob-faint)]">{timeLabel(m.created_at)}</div>
                 </div>
               </div>
             </div>
@@ -467,57 +362,52 @@ export function AssistantChatView({
         })}
         {pending !== null && (
           <>
-            <div className="mb-2 flex justify-end">
-              <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-[#e3f0ff] text-start px-3.5 py-2 text-sm leading-relaxed shadow-sm sm:max-w-[75%]">
-                <div className="mb-0.5 text-xs font-bold" style={{ color: speakerColor[actor === "dima" ? "דימה" : "יוגב"] }}>
-                  {actor === "dima" ? "דימה" : "יוגב"}
+            <div dir="rtl" className="mb-2 flex justify-end">
+              <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-[var(--hob-bg2)] px-3.5 py-2 text-start text-sm leading-relaxed shadow-sm sm:max-w-[75%]">
+                <div className="mb-0.5 text-xs font-bold" style={{ color: colorOf(me) }}>
+                  {myLabel}
                 </div>
                 <div className="text-[var(--hob-ink)]">{pending}</div>
               </div>
             </div>
-            {quick ? (
-              <div dir="rtl" className="mb-2 flex justify-start">
-                <div className="w-full max-w-[94%] whitespace-pre-wrap rounded-2xl bg-[var(--hob-bg2)] px-3.5 py-2 text-start text-sm leading-relaxed text-[var(--hob-soft)] shadow-sm sm:max-w-[82%]">
-                  <div className="mb-0.5 text-xs font-bold text-[var(--hob-faint)]">🤖 ברונו · מיידי</div>
-                  <div>{quick}</div>
-                  <div className="mt-1 text-[10px] text-[var(--hob-faint)]">
-                    בודק לעומק<span className="animate-pulse">…</span>
+            <div dir="rtl" className="mb-2 flex justify-start">
+              <div className="w-full max-w-[94%] whitespace-pre-wrap rounded-2xl bg-[var(--hob-bg2)] px-3.5 py-2 text-start text-sm leading-relaxed text-[var(--hob-soft)] shadow-sm sm:max-w-[82%]">
+                <div className="mb-0.5 text-xs font-bold text-[var(--hob-faint)]">הובי</div>
+                {quick ? (
+                  <>
+                    <div>{quick}</div>
+                    <div className="mt-1 text-[10px] text-[var(--hob-faint)]">
+                      בודקת לעומק<span className="animate-pulse">…</span>
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    הובי חושבת<span className="animate-pulse">…</span>
                   </div>
-                </div>
+                )}
               </div>
-            ) : (
-              <div className="mb-2 flex justify-start">
-                <div className="rounded-2xl bg-[var(--hob-bg2)] px-3.5 py-2 text-sm text-[var(--hob-soft)] shadow-sm">
-                  🤖 ברונו חושב<span className="animate-pulse">…</span>
-                </div>
-              </div>
-            )}
+            </div>
           </>
         )}
-        {sendError && (
-          <div className="mb-2 text-center text-xs text-[#e2445c]">
-            ההודעה לא נשלחה — נסו שוב.
-          </div>
-        )}
-        <div ref={bottomRef} />
+        {sendError && <div className="mb-2 text-center text-xs text-[#e2445c]">ההודעה לא נשלחה. נסו שוב.</div>}
       </div>
       {held.map((h) => (
         <div key={h.id} className="mx-3 mb-2 rounded-xl border border-[#fdab3d] bg-[var(--hob-bg)] p-3">
-          <div className="text-xs font-medium text-[#fdab3d]">{h.state === "unknown" ? "לא ידוע אם בוצע" : "מחכה לאישור שלך, עוד לא בוצע"}</div>
+          <div className="text-xs font-medium text-[#fdab3d]">{h.state === "unknown" ? "לא ידוע אם בוצע" : "מחכה לאישור, עוד לא בוצע"}</div>
           <div className="mt-1 text-sm leading-relaxed text-[var(--hob-ink)]">{h.summary}</div>
           {h.note && <div className="mt-1 text-xs text-[#f0768a]">{h.note}</div>}
           <div className="mt-2 flex gap-2">
             {h.state === "unknown" ? (
               <button type="button" onClick={() => void closeUnknown(h.id)} className="rounded-lg border border-[var(--hob-rule-strong)] px-4 py-1.5 text-sm text-[var(--hob-ink)]">
-                בדקתי ביומן, סגור
+                בדקתי ביומן, סגרי
               </button>
             ) : (
               <>
                 <button type="button" disabled={confirming} onClick={() => void answerHeld(h.id, true)} className="rounded-lg bg-[var(--hob-accent)] px-4 py-1.5 text-sm font-medium text-[var(--hob-accent-fg)] disabled:opacity-50">
-                  אשר ובצע
+                  אשרי ובצעי
                 </button>
                 <button type="button" disabled={confirming} onClick={() => void answerHeld(h.id, false)} className="rounded-lg border border-[var(--hob-rule-strong)] px-4 py-1.5 text-sm text-[var(--hob-ink)] disabled:opacity-50">
-                  בטל
+                  בטלי
                 </button>
               </>
             )}
@@ -540,20 +430,20 @@ export function AssistantChatView({
           type="button"
           onClick={() => fileRef.current?.click()}
           disabled={pending !== null}
-          title="תמונה: קבלה נרשמת כהוצאה, וצילום מסך של רילז או בגד עובר למיכאלה"
+          title="צילום קבלה: נרשמת כהוצאה ומצורפת אליה"
           className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-[var(--hob-rule-strong)] bg-[var(--hob-surface)] text-lg transition-opacity disabled:opacity-40"
         >
           📷
         </button>
-        {voiceOk && (
+        {rec.supported && (
           <button
             type="button"
-            onClick={toggleMic}
-            disabled={pending !== null || transcribing}
-            title={listening ? "מקליט. לחיצה עוצרת ושולחת" : "לדבר עם ברונו"}
-            aria-pressed={listening}
+            onClick={() => void rec.toggle()}
+            disabled={pending !== null || rec.busy}
+            title={rec.recording ? "מקליטה. לחיצה עוצרת ושולחת" : "לדבר עם הובי"}
+            aria-pressed={rec.recording}
             className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border text-lg transition disabled:opacity-40 ${
-              listening ? "animate-pulse border-[#e2445c] bg-[#e2445c] text-white" : "border-[var(--hob-rule-strong)] bg-[var(--hob-surface)]"
+              rec.recording ? "animate-pulse border-[#e2445c] bg-[#e2445c] text-white" : "border-[var(--hob-rule-strong)] bg-[var(--hob-surface)]"
             }`}
           >
             🎙️
@@ -569,7 +459,7 @@ export function AssistantChatView({
             }
           }}
           rows={1}
-          placeholder={listening ? "מקליט… לחץ שוב לשליחה" : transcribing ? "מתמלל…" : "כתבו לברונו…"}
+          placeholder={rec.recording ? "מקליטה… לחיצה נוספת שולחת" : rec.busy ? "מתמללת…" : "כתבו להובי…"}
           className="max-h-32 min-h-[42px] min-w-0 flex-1 resize-none rounded-xl border border-[var(--hob-rule-strong)] bg-[var(--hob-surface)] px-3.5 py-2.5 text-[16px] text-[var(--hob-ink)] outline-none focus:border-[var(--hob-accent)] sm:text-sm"
         />
         <button

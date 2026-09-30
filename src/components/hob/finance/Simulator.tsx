@@ -1,47 +1,42 @@
-// 💰 Finance tab: shared expense log, live budget-vs-actual with traffic
-// lights, and an interactive profit simulator — the web version of the
-// partners' SEGULA-כספים.xlsx workbook.
+// 🎛 Drop simulator: define any drop's products, play with prices and
+// sell-through, compare saved scenarios.
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { isDemo } from "../demo";
-import { parseMoney } from "../board";
 
-import { NIS, Revenue, Scenario, Sh, todayISO } from "./shared";
-// The model itself lives in lib/dropmath.ts (shared with the studio tab and
-// the public concept page) — this file is the UI around it.
-import { FIXED_KEYS, computeSim, normalizeCosts, type DropSim, type SimProduct } from "../../../lib/dropmath";
+import { NIS, type Scenario, Sh, todayISO } from "./shared";
+// The model itself lives in lib/dropmath.ts; this file is the UI around it.
+import { FIXED_KEYS, MARKETING_KEY, computeSim, emptySim, type DropSim, type SimProduct } from "../../../lib/dropmath";
 
-// Plain-Hebrew explainers behind the (?) button on each P&L row — written
+// Plain-Hebrew explainers behind the (?) button on each P&L row, written
 // for a partner who never opened a finance book.
 const EXPLAIN: Record<string, string> = {
   "Revenue — סך הכל הכנסה":
     "כל הכסף שנכנס לקופה: מספר היחידות שנמכרו כפול המחיר. זה עוד לא רווח — מכאן מתחילים להוריד את כל העלויות.",
   'הכנסה נטו ממע"מ (÷1.18)':
-    'המע"מ שגביתם מהלקוח לא שלכם — הוא עובר למדינה. מחלקים ב-1.18 ומקבלים כמה מהמכירה באמת נשאר אצלכם לעבוד איתו.',
+    'המע"מ שגביתן מהלקוחה לא שלכן — הוא עובר למדינה. מחלקים ב-1.18 ומקבלים כמה מהמכירה באמת נשאר אצלכם לעבוד איתו.',
   "COGS — עלות ייצור הנמכרים":
-    "Cost of Goods Sold — כמה עלה לייצר רק את מה שנמכר. חולצה שעלתה 48 ₪ ונמכרה — נספרת כאן; חולצה שנשארה במלאי — לא (היא כסף שתקוע במלאי, לא עלות של המכירה).",
+    "Cost of Goods Sold — כמה עלה לייצר רק את מה שנמכר. פריט שעלה 50 ₪ ונמכר — נספרת כאן; פריט שנשאר במלאי — לא (היא כסף שתקוע במלאי, לא עלות של המכירה).",
   "COGS אחרי שילוח":
     "אותה עלות ייצור + המשלוחים ללקוחות. ככה רואים כמה עולה בפועל 'לספק' את כל ההזמנות, לא רק לייצר אותן.",
   "Gross Profit — רווח גולמי":
-    "ההכנסה פחות עלות הייצור. האחוז שלו (Gross Margin) הוא המספר שמשווים בין מותגים — מותג סטריטוור בריא רץ על 55-70%. אם אתם מתחת — המחיר נמוך מדי או הייצור יקר מדי.",
+    "ההכנסה פחות עלות הייצור. האחוז שלו (Gross Margin) הוא המספר שמשווים בין מותגים — מותג אופנה בריא רץ על 55-70%. אם אתן מתחת — המחיר נמוך מדי או הייצור יקר מדי.",
   "Contribution Margin — רווח תרומה":
     "מה שנשאר אחרי כל העלויות שגדלות עם כל מכירה: ייצור ומשלוח. זה המספר הכי חשוב להחלטות — כל יחידה נוספת שנמכרת מוסיפה בדיוק את זה, ומזה מכסים את ההוצאות הקבועות.",
   "שיווק ממומן":
-    "תקציב הקמפיינים של הדרופ. הוצאה קבועה — משלמים אותה בין אם המודעה מכרה 10 חולצות או 300.",
+    "תקציב הקמפיינים של הדרופ. הוצאה קבועה — משלמים אותה בין אם המודעה מכרה 10 פריטים או 300.",
   "הוצאות קבועות של הדרופ":
-    "צילומים, סמפלים, אריזה, עיצוב — משלמים פעם אחת לדרופ, לא משנה כמה נמכר. ככל שמוכרים יותר, הן 'מתחלקות' על יותר יחידות — ולכן דרופ שמוכר טוב פתאום רווחי בהרבה.",
+    "צילומים, דוגמאות, אריזה, עיצוב — משלמים פעם אחת לדרופ, לא משנה כמה נמכר. ככל שמוכרים יותר, הן 'מתחלקות' על יותר יחידות — ולכן דרופ שמוכר טוב פתאום רווחי בהרבה.",
   "Net Profit — רווח נקי":
     "השורה התחתונה החשבונאית — ההכנסה פחות עלות מה שנמכר, משלוחים, שיווק וקבועות. Net Margin = כמה אגורות מכל שקל מכירה נשארות רווח; 15-20% נחשב טוב למותג צעיר.",
   "Unsold Inventory — מלאי שלא נמכר":
-    "שילמתם על כל הייצור מראש. כל פריט שלא נמכר הוא כסף שכבר יצא מהחשבון וטרם חזר — הוא לא 'הפסד' (אפשר למכור אותו בדרופ הבא או במבצע), אבל הוא גם לא בכיס. לכן הוא יורד מהרווח החשבונאי כדי להגיע למזומן האמיתי.",
+    "שילמתן על כל הייצור מראש. כל פריט שלא נמכר הוא כסף שכבר יצא מהחשבון וטרם חזר — הוא לא 'הפסד' (אפשר למכור אותו בדרופ הבא או במבצע), אבל הוא גם לא בכיס. לכן הוא יורד מהרווח החשבונאי כדי להגיע למזומן האמיתי.",
   "Cash Left — מה שנשאר בפועל":
     "כמה כסף באמת נשאר בחשבון בסוף הדרופ: ההכנסה פחות Total Landed Cost. זה המספר שקובע כמה מההשקעה חזרה וכמה יש לדרופ הבא. ככל שאחוז המכירה עולה, הוא מתקרב ל-Net Profit.",
   "Total Production Cost":
-    "כמה עולה לייצר את כל הריצה — כל היחידות שהזמנתם, לא רק אלה שיימכרו. את הסכום הזה משלמים למפעל מראש, לפני שנכנס שקל אחד.",
+    "כמה עולה לייצר את כל הריצה — כל היחידות שהזמנתן, לא רק אלה שיימכרו. את הסכום הזה משלמים למפעל מראש, לפני שנכנס שקל אחד.",
   "Total Upfront Cost":
     "הייצור המלא ועוד ההוצאות הקבועות — כמה כסף חייב להיות בכיס כדי בכלל להוציא את הדרופ לדרך. זה מספר תזרים, לא מספר רווח.",
   "Variable Costs":
-    "משלוחים ללקוחות. בניגוד לקבועות, הם גדלים עם כל הזמנה — ומשולמים מתוך הכסף שנכנס, לא מראש. עמלות סליקה לא נכללות במודל — מוסיפים אותן בנפרד.",
+    "משלוחים ללקוחות. בניגוד לקבועות, הם גדלים עם כל הזמנה — ומשולמים מתוך הכסף שנכנס, לא מראש. עמלות סליקה לא נכללות במודל — מוסיפות אותן בנפרד.",
   "Total Landed Cost":
     "כל מה שהדרופ עולה בסוף הדרך: ייצור מלא + קבועות + משלוחים. ההכנסה פחות המספר הזה היא בדיוק Cash Left.",
   "עלות מלאה ליחידה":
@@ -49,7 +44,7 @@ const EXPLAIN: Record<string, string> = {
   "נקודת איזון":
     "כמה יחידות צריך למכור כדי לכסות את השיווק וההוצאות הקבועות. מעבר למספר הזה, כל יחידה נוספת היא רווח כמעט נקי.",
   "עלות ליחידה":
-    "מה שהמפעל לוקח על פריט אחד. המספר הזה קבוע — חולצה עולה אותו דבר בין אם תמכרו 10 או 450. זה מה שאתם מזינים למעלה בשורת המוצר.",
+    "מה שהמפעל לוקח על פריט אחד. המספר הזה קבוע — פריט עולה אותו דבר בין אם תמכרו 10 או 450. זה מה שאתן מזינות למעלה בשורת המוצר.",
   "עלות ליחידה אחרי הכל":
     "כמה פריט אחד שנמכר באמת עלה: הייצור של כל הריצה של אותו מוצר (כולל מה שלא נמכר), המשלוח שלו, וחלקו היחסי בהוצאות הקבועות של הדרופ. המספר הזה לא קבוע — ככל שמוכרים אחוז נמוך יותר הוא עולה, כי אותן הוצאות מתחלקות על פחות יחידות. משווים אותו למחיר: ההפרש הוא המרווח האמיתי לפריט.",
   "Production Cost":
@@ -57,7 +52,7 @@ const EXPLAIN: Record<string, string> = {
   "עלות יחידה":
     "רק מה שהמפעל לקח, בממוצע על היחידות שנמכרו. המספר הזה קבוע — הוא לא זז כשמוכרים יותר או פחות. זו נקודת ההתחלה, ומכאן מוסיפים שכבות.",
   "עלות יחידה אחרי הוצאות כלליות":
-    "הייצור ועוד החלק היחסי בהוצאות הקבועות של הדרופ — צילומים, סמפלים, עיצוב, שיווק. אלה הוצאות שלא שייכות לפריט מסוים, אז מחלקים אותן שווה בין היחידות שנמכרו. כאן המספר כבר מתחיל לזוז: כשמוכרים פחות, אותן הוצאות מתחלקות על פחות יחידות.",
+    "הייצור ועוד החלק היחסי בהוצאות הקבועות של הדרופ — צילומים, דוגמאות, עיצוב, שיווק. אלה הוצאות שלא שייכות לפריט מסוים, אז מחלקים אותן שווה בין היחידות שנמכרו. כאן המספר כבר מתחיל לזוז: כשמוכרים פחות, אותן הוצאות מתחלקות על פחות יחידות.",
 };
 
 // The expanded scenario panel uses short labels; the P&L ladder's explainers are
@@ -72,59 +67,19 @@ const EXPLAIN_ALIAS: Record<string, string> = {
 };
 const explainFor = (label: string): string | undefined => EXPLAIN[EXPLAIN_ALIAS[label] ?? label];
 
-const DROP3: DropSim = {
-  dropName: "דרופ 3 — האדם החולם",
-  products: [
-    { name: "חולצה", qty: 300, price: 199, cost: 48, sellPct: 0.75 },
-    { name: "כובע", qty: 150, price: 149, cost: 40, sellPct: 0.75 },
-  ],
-  itemsPerOrder: 1.3,
-  shipPerOrder: 30,
-  marketing: 0,
-  fixed: 0,
-  // The real drop-3 numbers from the expense journal.
-  fixedCosts: {
-    "שיווק ממומן": 3000,
-    "צילומים והפקה": 3500,
-    "סמפלים": 4679,
-    "אריזה ומיתוג": 800,
-    "עיצוב": 600,
-    "משפיענים/סידינג": 1000,
-    "פופ-אפ/אירועים": 0,
-    "אתר ותוכנות": 600,
-    'בלת"מ (אחר)': 0,
-  },
-};
-const EMPTY_DROP: DropSim = {
-  dropName: "דרופ חדש",
-  products: [{ name: "מוצר 1", qty: 100, price: 149, cost: 40, sellPct: 0.75 }],
-  itemsPerOrder: 1.2,
-  shipPerOrder: 30,
-  marketing: 0,
-  fixed: 0,
-  fixedCosts: {
-    "שיווק ממומן": 2000,
-    "צילומים והפקה": 2000,
-    "סמפלים": 1000,
-    "אריזה ומיתוג": 0,
-    "עיצוב": 0,
-    "משפיענים/סידינג": 0,
-    "פופ-אפ/אירועים": 0,
-    "אתר ותוכנות": 0,
-    'בלת"מ (אחר)': 0,
-  },
-};
 const SIM_KEY = "hob_drop_sim";
 const SIM_SAVES_KEY = "hob_drop_sim_saves";
 
-function loadSim(): DropSim {
+// The scenario left open on this device; otherwise an empty one whose VAT
+// mode follows the business setting (settings.vat_exempt).
+function loadSim(vatExempt: boolean): DropSim {
   try {
     const raw = localStorage.getItem(SIM_KEY);
     if (raw) return JSON.parse(raw) as DropSim;
   } catch {
     // fall through to default
   }
-  return DROP3;
+  return emptySim({ vatExempt });
 }
 
 function Slider({
@@ -182,14 +137,17 @@ function NumBox({ value, onChange, width = "w-20", money = false }: { value: num
 
 export function Simulator({
   scenarios,
+  vatExempt,
   onSave,
   onDelete,
 }: {
   scenarios: Scenario[];
+  /** settings.vat_exempt: the default for a new scenario. */
+  vatExempt: boolean;
   onSave: (name: string, data: string) => void;
   onDelete: (name: string) => void;
 }) {
-  const [sim, setSimRaw] = useState<DropSim>(loadSim);
+  const [sim, setSimRaw] = useState<DropSim>(() => loadSim(vatExempt));
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const [step1Open, setStep1Open] = useState(true);
   const [step2Open, setStep2Open] = useState(true);
@@ -245,14 +203,13 @@ export function Simulator({
     costs, vatDiv, fixedSum, marketingCost, otherFixed, perProduct, gross, net, production,
     totalUnits, orders, shipping, fees, grossProfit, cogsAfterShipping, contribution, profit,
     productionAll, qtyAll, leftValue, leftUnits, upfront, variable, landed, costPerUnitSold,
-    upfrontPerUnitMade, cashProfit, avgContrib, avgPrice, breakEvenUnits,
+    upfrontPerUnitMade, cashProfit, avgContrib, avgPrice, breakEvenUnits, returnTarget, returnProgress,
   } = R;
   const setCost = (key: string, n: number) =>
     setSim({ ...sim, marketing: 0, fixed: 0, fixedItems: undefined, fixedCosts: { ...costs, [key]: n } });
   const pctOfNet = (v: number) => (net > 0 ? `${Math.round((v / net) * 100)}%` : "—");
   const fixedTotal = fixedSum;
   const breakEvenRevenue = breakEvenUnits !== null ? breakEvenUnits * avgPrice : null;
-  const toReturn = Math.max(0, Math.min(1, cashProfit / 60000));
 
   // Fully-sold scenario — the reference point for "what is sell-through worth".
   const allSold = computeSim({ ...sim, products: sim.products.map((p) => ({ ...p, sellPct: 1 })) });
@@ -284,12 +241,12 @@ export function Simulator({
     {
       title: `מבצע סוף עונה על ${leftUnits} היחידות שנשארות`,
       gain: clearance,
-      note: `במחצית המחיר. כבר שילמת עליהן ${NIS(leftValue)} — אין עלות ייצור נוספת, רק משלוח.`,
+      note: `במחצית המחיר. כבר שילמתן עליהן ${NIS(leftValue)} — אין עלות ייצור נוספת, רק משלוח.`,
     },
     {
       title: `${biggest?.name ?? "המוצר המוביל"}: ${NIS(biggest?.price ?? 0)} → ${NIS((biggest?.price ?? 0) + 20)}`,
       gain: pricedUp.cashProfit - cashProfit,
-      note: "בהנחה שאחוז המכירה לא נפגע — הנחה שצריך לבדוק לפני שמעלים מחיר.",
+      note: "בהנחה שאחוז המכירה לא נפגע — הנחה שצריך לבדוק לפני שמעלות מחיר.",
     },
   ]
     .filter((a) => isFinite(a.gain) && a.gain > 0)
@@ -349,7 +306,7 @@ export function Simulator({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `segula-drops-${todayISO()}.csv`;
+    a.download = `hob-drops-${todayISO()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -357,7 +314,7 @@ export function Simulator({
   return (
     <div className="hob-nodemo rounded-xl bg-[var(--hob-surface)] p-4 shadow-sm">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-base font-bold text-[var(--hob-ink)]">🎛 סימולטור דרופ — לכל דרופ שתרצו</h3>
+        <h3 className="text-base font-bold text-[var(--hob-ink)]">🎛 סימולטור דרופ — לכל דרופ שתרצו לתכנן</h3>
         <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
@@ -372,10 +329,7 @@ export function Simulator({
           >
             {sim.vatExempt === false ? '🧾 עוסק מורשה — מע"מ 18%' : '🧾 עוסק פטור — בלי מע"מ'}
           </button>
-          <button type="button" onClick={() => setSim(DROP3)} className="rounded-full bg-[var(--hob-hover)] px-3 py-1 text-xs text-[var(--hob-soft)] hover:bg-[#0073ea]/20">
-            דרופ 3 (הנוכחי)
-          </button>
-          <button type="button" onClick={() => setSim(EMPTY_DROP)} className="rounded-full bg-[var(--hob-hover)] px-3 py-1 text-xs text-[var(--hob-soft)] hover:bg-[#0073ea]/20">
+          <button type="button" onClick={() => setSim(emptySim({ vatExempt }))} className="rounded-full bg-[var(--hob-hover)] px-3 py-1 text-xs text-[var(--hob-soft)] hover:bg-[#0073ea]/20">
             ➕ דרופ חדש
           </button>
         </div>
@@ -392,7 +346,7 @@ export function Simulator({
           💾 שמירת תרחיש
         </button>
         <span className="text-[11px] text-[var(--hob-faint)]">
-          נשמר בטבלה למטה — שניכם רואים את אותם תרחישים
+          נשמר בטבלה למטה — שתיכן רואות את אותם תרחישים
         </span>
       </div>
 
@@ -489,7 +443,7 @@ export function Simulator({
             ))}
           </div>
           <p className="mt-1.5 text-[10.5px] text-[var(--hob-faint)]">
-            הוצאות חד-פעמיות שלא תלויות בכמות שנמכרת. הייצור עצמו כבר בעלות ליחידה למעלה; משלוח ללקוח — בסליידר. עמלות סליקה לא במודל.
+            הוצאות חד-פעמיות שלא תלויות בכמות שנמכרת. הייצור עצמו כבר בעלות ליחידה למעלה; משלוח ללקוחה — בסליידר. עמלות סליקה לא במודל.
           </p>
         </div>
         </div>
@@ -624,7 +578,7 @@ export function Simulator({
             </div>
           )}
         </div>
-        {/* P&L ladder — same terms and colors as the partners' Google Sheet */}
+        {/* P&L ladder */}
         <div className="overflow-x-auto rounded-lg border border-[var(--hob-hover)]">
           <table className="w-full text-[13px]">
             <thead>
@@ -644,8 +598,8 @@ export function Simulator({
                 ["COGS אחרי שילוח", `ייצור + משלוחים (${Math.round(orders)} הזמנות)`, -cogsAfterShipping, "rgba(226,68,92,.20)", false, pctOfNet(cogsAfterShipping)],
                 ["Gross Profit — רווח גולמי", "נטו פחות COGS · Gross Margin", grossProfit, "rgba(0,200,117,.10)", true, pctOfNet(grossProfit)],
                 ["Contribution Margin — רווח תרומה", "אחרי גם המשלוחים — כל שקל מכירה נוסף מוסיף לפי זה", contribution, "rgba(0,200,117,.10)", true, pctOfNet(contribution)],
-                ["שיווק ממומן", "הקמפיינים של הדרופ", -marketingCost, "rgba(226,68,92,.10)", false, pctOfNet(marketingCost)],
-                ["הוצאות קבועות של הדרופ", FIXED_KEYS.filter((k) => k !== "שיווק ממומן" && costs[k] > 0).join(" · ") || "אין", -otherFixed, "rgba(226,68,92,.10)", false, pctOfNet(otherFixed)],
+                [MARKETING_KEY, "הקמפיינים של הדרופ", -marketingCost, "rgba(226,68,92,.10)", false, pctOfNet(marketingCost)],
+                ["הוצאות קבועות של הדרופ", FIXED_KEYS.filter((k) => k !== MARKETING_KEY && costs[k] > 0).join(" · ") || "אין", -otherFixed, "rgba(226,68,92,.10)", false, pctOfNet(otherFixed)],
                 ["Net Profit — רווח נקי", "התוצאה החשבונאית", profit, "rgba(0,200,117,.10)", true, pctOfNet(profit)],
                 ...(leftUnits > 0
                   ? [[
@@ -696,7 +650,7 @@ export function Simulator({
           <div className="mb-1 font-bold text-[var(--hob-ink)]">🎯 נקודת איזון (Break-Even)</div>
           {breakEvenUnits === null ? (
             <p className="text-[#e2445c]">
-              במחירים והעלויות האלה כל יחידה מפסידה כסף — אין נקודת איזון. תעלו מחיר או תורידו עלויות.
+              במחירים והעלויות האלה כל יחידה מפסידה כסף — אין נקודת איזון. העלו מחיר או הורידו עלויות.
             </p>
           ) : (
             <>
@@ -763,13 +717,19 @@ export function Simulator({
             <div>
               Net Profit: <b>{Sh(profit)}</b> · Net Margin: <b>{pctOfNet(profit)}</b>
             </div>
-            <div>
-              מהדרך להחזר 60K: <b>{Math.round((cashProfit / 60000) * 100)}%</b>
+            <div className="mt-1 flex items-center justify-end gap-1.5 text-[12px]">
+              <span>יעד החזר (רשות):</span>
+              <NumBox money value={sim.returnTarget ?? 0} onChange={(n) => patch({ returnTarget: Math.max(0, n) })} width="w-24" />
+              {returnTarget !== null && returnProgress !== null && (
+                <b className="text-[var(--hob-ink)]">{Math.round((cashProfit / returnTarget) * 100)}%</b>
+              )}
             </div>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--hob-surface)]">
-            <div className="h-full rounded-full bg-[#037f4c] transition-all" style={{ width: `${toReturn * 100}%` }} />
-          </div>
+          {returnTarget !== null && returnProgress !== null && (
+            <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--hob-surface)]" title={`מהדרך ליעד ${NIS(returnTarget)}`}>
+              <div className="h-full rounded-full bg-[#037f4c] transition-all" style={{ width: `${returnProgress * 100}%` }} />
+            </div>
+          )}
         </div>
 
         {/* What to actually do — every lever re-runs the model, so it tracks
@@ -838,7 +798,7 @@ export function Simulator({
         </div>
         {rows.length === 0 ? (
           <p className="p-3 text-[12px] text-[var(--hob-faint)]">
-            עוד לא שמרתם תרחישים. שנו את המספרים למעלה, תנו שם לדרופ ולחצו 💾 — הוא יופיע כאן כשורה,
+            עוד לא שמרתן תרחישים. שנו את המספרים למעלה, תנו שם לדרופ ולחצו 💾 — הוא יופיע כאן כשורה,
             ותוכלו להשוות בין דרופים במקום לזכור מספרים.
           </p>
         ) : (
@@ -1106,12 +1066,12 @@ export function Simulator({
                                     .join("  ·  ")}
                                 </div>
                                 {/* Why this scenario exists — in two months nobody
-                                    remembers why "דרופ 4 קטן" seemed smart. */}
+                                    remembers why a scenario seemed smart. */}
                                 <div className="mt-2 flex items-center gap-2">
                                   <span className="shrink-0 text-[10.5px] text-[var(--hob-faint)]">📝 הערה</span>
                                   <input
                                     className="w-full rounded-md border border-[var(--hob-rule)] bg-[var(--hob-surface)] px-2 py-1 text-[11.5px] focus:border-[#037f4c] focus:outline-none"
-                                    placeholder="למה התרחיש הזה? (נשמר לשניכם)"
+                                    placeholder="למה התרחיש הזה? (נשמר לשתיכן)"
                                     defaultValue={row.sim.note ?? ""}
                                     onBlur={(e) => {
                                       const note = e.target.value.trim().slice(0, 200);
@@ -1138,6 +1098,3 @@ export function Simulator({
   );
 }
 
-// ---- Sales pace: how the CURRENT drop is actually moving ----
-// Deliberately separate from the simulator, which the partners keep for
-// planning future drops — this strip reads only the real ledger.

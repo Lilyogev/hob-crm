@@ -1,40 +1,69 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { clientIp, db, isAuthed, rateHit, rateLocked, tooMany, unauthorized } from "../../lib/hob.server";
-import { prospectRequest, recordOutcome, setSeedHandles, setVerdict } from "../../lib/partners.server";
 import {
+  clientIp,
+  currentUser,
+  isAuthed,
+  rateHit,
+  rateLocked,
+  tooMany,
+  unauthorized,
+} from "../../lib/hob.server";
+import {
+  addProspect,
+  addProspectLog,
   addSignup,
   adminData,
+  collabSettings,
   createLink,
-  addProspect,
+  deleteLink,
   deleteProspect,
   deleteShopifyCode,
+  deleteSignup,
   ensureDiscountCode,
   fixCodeCombinations,
-  setCodeActive,
+  markCommissionPaid,
+  parseSignup,
   prospectToLink,
+  setCodeActive,
+  setFileReceived,
+  setHandledBy,
+  updateCampaign,
   updateLinkNote,
+  updateProspect,
   updateProspectStatus,
   updateReel,
-  deleteLink,
-  deleteSignup,
-  parseSignup,
-  updateCampaign,
   updateSignupStatus,
-  markCommissionPaid,
-  setFileReceived,
 } from "../../lib/collab.server";
 
 function bad(): Response {
   return Response.json({ ok: false, code: "bad_request" }, { status: 400 });
 }
 
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
 export const Route = createFileRoute("/api/collab")({
   server: {
     handlers: {
-      // Admin data for the board tab — authed only.
+      // Admin data for the board tab — authed only. Carries the actor (so the
+      // tab can default the "who handles" chip) and the public-link settings.
       GET: async ({ request }) => {
         if (!(await isAuthed(request))) return unauthorized();
-        return Response.json({ ok: true, ...(await adminData()) });
+        const actor = (await currentUser(request))?.key ?? "";
+        const s = await collabSettings(new URL(request.url).origin);
+        return Response.json({
+          ok: true,
+          me: actor,
+          settings: {
+            base: s.base,
+            storeUrl: s.storeUrl,
+            discountPct: s.discountPct,
+            commissionPct: s.commissionPct,
+            instagram: s.instagram,
+            brandName: s.brandName,
+          },
+          ...(await adminData()),
+        });
       },
 
       POST: async ({ request }) => {
@@ -61,8 +90,11 @@ export const Route = createFileRoute("/api/collab")({
           return Response.json(res);
         }
 
-        // Everything else manages the program — authed only.
+        // Everything else manages the program — authed only. The actor comes
+        // from the session, never from the client.
         if (!(await isAuthed(request))) return unauthorized();
+        const actor = (await currentUser(request))?.key ?? "";
+        const handled = typeof body.handled_by === "string" ? body.handled_by : actor;
 
         if (action === "create_link") {
           const campaignId = Number(body.campaignId);
@@ -84,11 +116,20 @@ export const Route = createFileRoute("/api/collab")({
             personal,
             body.generic === true,
             gender,
+            handled,
           );
-          // The Shopify code is NOT minted here — it's created automatically
-          // when the influencer reaches 'posted' (or manually from the tab),
-          // so the store doesn't fill up with codes nobody used.
+          // The store code is NOT minted here — it's created automatically
+          // when the signup is approved (or manually from the tab), so the
+          // store doesn't fill up with codes nobody used.
           return Response.json({ ok: true, link });
+        }
+
+        if (action === "set_handled_by") {
+          const id = Number(body.id);
+          const kind = body.kind === "prospect" ? "prospect" : body.kind === "link" ? "link" : null;
+          if (!Number.isFinite(id) || !kind) return bad();
+          await setHandledBy(kind, id, typeof body.who === "string" ? body.who : "");
+          return Response.json({ ok: true });
         }
 
         if (action === "create_code") {
@@ -164,60 +205,57 @@ export const Route = createFileRoute("/api/collab")({
         if (action === "update_reel") {
           const id = Number(body.id);
           if (!Number.isFinite(id)) return bad();
-          await updateReel(id, {
-            reel_url: typeof body.reel_url === "string" ? body.reel_url : undefined,
-            reel_views: typeof body.reel_views === "number" ? body.reel_views : undefined,
-          });
+          await updateReel(id, { reel_url: str(body.reel_url), reel_views: num(body.reel_views) });
           return Response.json({ ok: true });
         }
+
+        // ---- Outreach prospects (manual) ----
 
         if (action === "add_prospect") {
           const name = typeof body.name === "string" ? body.name.trim() : "";
           if (!name) return bad();
           const res = await addProspect({
             name,
-            instagram: typeof body.instagram === "string" ? body.instagram.trim() : "",
+            instagram: str(body.instagram)?.trim() ?? "",
             followers: Number(body.followers) || 0,
-            gender: typeof body.gender === "string" ? body.gender : "",
-            niche: typeof body.niche === "string" ? body.niche : "",
-            note: typeof body.note === "string" ? body.note : "",
+            gender: str(body.gender) ?? "",
+            niche: str(body.niche) ?? "",
+            note: str(body.note) ?? "",
+            handled_by: handled,
           });
           return Response.json(res);
+        }
+
+        if (action === "update_prospect") {
+          const id = Number(body.id);
+          if (!Number.isFinite(id)) return bad();
+          await updateProspect(id, {
+            name: str(body.name),
+            instagram: str(body.instagram),
+            followers: num(body.followers),
+            gender: str(body.gender),
+            niche: str(body.niche),
+            note: str(body.note),
+            personal: str(body.personal),
+            next_step: str(body.next_step),
+            followup_date: str(body.followup_date),
+            size: str(body.size),
+          });
+          return Response.json({ ok: true });
+        }
+
+        if (action === "prospect_log") {
+          const id = Number(body.id);
+          if (!Number.isFinite(id)) return bad();
+          const ok = await addProspectLog(id, typeof body.text === "string" ? body.text : "");
+          return Response.json({ ok });
         }
 
         if (action === "prospect_status") {
           const id = Number(body.id);
           const status = typeof body.status === "string" ? body.status : "";
-          if (!Number.isFinite(id)) return bad();
-          // שלבי המסלול עוברים דרך updateProspect (יומן + העברה למיכאלה); linked/rejected נשארים כמו שהיו.
-          if (status === "linked" || status === "rejected") {
-            if (!(await updateProspectStatus(id, status))) return bad();
-            return Response.json({ ok: true });
-          }
-          // שלבי המסלול, אישור/עדכון/ביטול צילום: עדכון והעברה למיכאלה באותה טרנזקציה.
-          // כשל חוזר כתשובה מלאה (200 + ok:false + הסבר), כדי שהכרטיס יציג אותו ולא "נשמר".
-          return Response.json(await prospectRequest(db(), "prospect_status", body));
-        }
-
-        // ליה: הטעם של יוגב, עדכון פרטים, תוצאה בסיום, וידיות לבדיקה.
-        if (action === "prospect_verdict") {
-          const id = Number(body.id);
-          const verdict = ["", "fit", "not_fit", "later"].includes(String(body.verdict)) ? (String(body.verdict) as "" | "fit" | "not_fit" | "later") : null;
-          if (!Number.isFinite(id) || verdict === null) return bad();
-          return Response.json({ ok: await setVerdict(db(), id, verdict, typeof body.reason === "string" ? body.reason : "") });
-        }
-        if (action === "prospect_update") {
-          const id = Number(body.id);
-          if (!Number.isFinite(id)) return bad();
-          return Response.json(await prospectRequest(db(), "prospect_update", body));
-        }
-        if (action === "prospect_outcome") {
-          const id = Number(body.id);
-          if (!Number.isFinite(id)) return bad();
-          return Response.json({ ok: await recordOutcome(db(), id, body.outcome) });
-        }
-        if (action === "seed_handles") {
-          return Response.json({ ok: true, handles: await setSeedHandles(db(), typeof body.handles === "string" ? body.handles : "") });
+          if (!Number.isFinite(id) || !(await updateProspectStatus(id, status))) return bad();
+          return Response.json({ ok: true });
         }
 
         if (action === "delete_prospect") {
@@ -231,7 +269,7 @@ export const Route = createFileRoute("/api/collab")({
           const id = Number(body.id);
           const campaignId = Number(body.campaignId);
           if (!Number.isFinite(id) || !Number.isFinite(campaignId)) return bad();
-          const link = await prospectToLink(id, campaignId);
+          const link = await prospectToLink(id, campaignId, actor);
           if (!link) return bad();
           return Response.json({ ok: true, link });
         }
@@ -240,11 +278,11 @@ export const Route = createFileRoute("/api/collab")({
           const id = Number(body.id);
           if (!Number.isFinite(id)) return bad();
           await updateCampaign(id, {
-            product_name: typeof body.product_name === "string" ? body.product_name : undefined,
-            product_value:
-              typeof body.product_value === "number" ? body.product_value : undefined,
-            brief: typeof body.brief === "string" ? body.brief : undefined,
-            asks: typeof body.asks === "string" ? body.asks : undefined,
+            title: str(body.title),
+            product_name: str(body.product_name),
+            product_value: num(body.product_value),
+            brief: str(body.brief),
+            asks: str(body.asks),
           });
           return Response.json({ ok: true });
         }

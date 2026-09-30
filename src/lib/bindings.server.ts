@@ -16,6 +16,9 @@ export type AppEnv = {
   // incoming Shopify webhooks (HMAC). See SHOPIFY.md.
   SHOPIFY_CLIENT_ID?: string;
   SHOPIFY_CLIENT_SECRET?: string;
+  // Signing secret of the webhook created in Settings → Notifications (optional:
+  // the client secret is also accepted).
+  SHOPIFY_WEBHOOK_SECRET?: string;
   // Web Push (VAPID). Public key is a var, private key a secret.
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_JWK?: string;

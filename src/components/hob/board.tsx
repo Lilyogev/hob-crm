@@ -1,30 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-// Every tab used to ship in one bundle: opening the task board on a phone
-// downloaded the 6.5K-line finance + seeding views first. Each tab is now
-// its own chunk, fetched on first visit (__root.tsx reloads once if a chunk
-// 404s after a deploy).
-const SeedingView = lazy(() => import("./seeding").then((m) => ({ default: m.SeedingView })));
-const FinanceView = lazy(() => import("./finance").then((m) => ({ default: m.FinanceView })));
-const AssistantChatView = lazy(() =>
-  import("./assistant-chat").then((m) => ({ default: m.AssistantChatView })),
-);
-const BizdevView = lazy(() => import("./bizdev").then((m) => ({ default: m.BizdevView })));
-const CampaignView = lazy(() => import("./campaign").then((m) => ({ default: m.CampaignView })));
-const InfluencersView = lazy(() =>
-  import("./influencers").then((m) => ({ default: m.InfluencersView })),
-);
-const StudioView = lazy(() => import("./studio").then((m) => ({ default: m.StudioView })));
-const PlanView = lazy(() => import("./plan").then((m) => ({ default: m.PlanView })));
-// טאב ברונו: העץ. יוגב העדיף אותו על העיצוב החדש (18.9), והעיצוב החדש (team2) נמחק.
-const TeamView = lazy(() => import("./team").then((m) => ({ default: m.TeamView })));
-const TodayView = lazy(() => import("./today").then((m) => ({ default: m.TodayView })));
-const BrunoLive = lazy(() => import("./bruno-live").then((m) => ({ default: m.BrunoLive })));
+import { OWNER_LABEL, PARTNER, type Partner } from "../../lib/partners";
 import { setDemo, useDemo } from "./demo";
 import { toggleTheme } from "./theme";
 import { toast } from "./toast";
 import { NoteCell } from "./note-cell";
+
+// Each tool tab is its own chunk, fetched on first visit (__root.tsx reloads
+// once if a chunk 404s after a deploy), so opening the task board on a phone
+// never downloads the stock and finance views first.
+const SeedingView = lazy(() => import("./seeding").then((m) => ({ default: m.SeedingView })));
+const FinanceView = lazy(() => import("./finance").then((m) => ({ default: m.FinanceView })));
+const InfluencersView = lazy(() => import("./influencers").then((m) => ({ default: m.InfluencersView })));
+const AssistantChatView = lazy(() => import("./assistant-chat").then((m) => ({ default: m.AssistantChatView })));
+const SettingsView = lazy(() => import("./settings").then((m) => ({ default: m.SettingsView })));
+const TodayView = lazy(() => import("./today").then((m) => ({ default: m.TodayView })));
+
+/** The logged-in partner, from /api/me. Kept in React state, never in localStorage. */
+export type BoardUser = { key: Partner; name: string };
 
 // ---- Types (mirror of the API) ----
 
@@ -43,6 +37,8 @@ export type Task = {
 
 export type Group = {
   id: number;
+  /** 'shared' | 'avia' | 'lior': the task tab that shows this group. */
+  view: string;
   title: string;
   color: string;
   position: number;
@@ -71,25 +67,21 @@ const PRIORITY: Record<string, { label: string; bg: string; fg: string }> = {
 };
 const PRIORITY_ORDER = ["high", "medium", "low", ""];
 
+// Task owner: one partner, both of them, or nobody yet (vocabulary from partners.ts).
 const OWNER: Record<string, { label: string; short: string; bg: string }> = {
-  "": { label: "ללא", short: "?", bg: "#c4c4c4" },
-  yogev: { label: "יוגב", short: "י", bg: "#0073ea" },
-  dima: { label: "דימה", short: "ד", bg: "#9d50dd" },
-  both: { label: "שניהם", short: "י+ד", bg: "#00a359" },
+  "": { label: OWNER_LABEL[""], short: "?", bg: "#c4c4c4" },
+  avia: { label: PARTNER.avia.label, short: PARTNER.avia.letter, bg: PARTNER.avia.color },
+  lior: { label: PARTNER.lior.label, short: PARTNER.lior.letter, bg: PARTNER.lior.color },
+  both: { label: OWNER_LABEL.both, short: `${PARTNER.avia.letter}+${PARTNER.lior.letter}`, bg: "#00a359" },
 };
-// דימה עוזב את העסק: "דימה" ו"שניהם" לא מוצעים יותר לבחירה. משימות ישנות
-// עם הערכים האלה עדיין מוצגות כמו שהן (OWNER למעלה), ושום נתון לא נכתב מחדש.
-const OWNER_ORDER = ["yogev", ""];
+const OWNER_ORDER: string[] = ["avia", "lior", "both", ""];
 
-// Each tab is a full view: which groups it shows, in which order.
-// Group ids match migrations 0002/0003. Weekday groups (6-12) appear in every view.
-const WEEKDAYS = [6, 7, 8, 9, 10, 11, 12];
-// 17.9.26: יוגב מפעיל את העסק לבד. הטאבים "משותף" ו"דימה" ירדו, ואחריהם גם
-// הקבוצות שלהם (1 דימה+יוגב, 13 מעקב דימה+יוגב, 2 דימה, 3 מעקב דימה) — הן לא
-// מוצגות יותר. השורות נשארות במסד (משימות שבוצעו או בארכיון); המשימה הפתוחה
-// היחידה שהייתה שם הועברה לקבוצה "יוגב".
-const VIEWS: { key: string; label: string; groupIds: number[] }[] = [
-  { key: "yogev", label: "משימות", groupIds: [4, 5, ...WEEKDAYS] },
+// The task tabs. Which groups each one shows comes from the server: every
+// board_groups row carries its view ('shared' | 'avia' | 'lior').
+const TASK_VIEWS: { key: string; label: string }[] = [
+  { key: "shared", label: "משותף" },
+  { key: "avia", label: PARTNER.avia.label },
+  { key: "lior", label: PARTNER.lior.label },
 ];
 
 // ---- API helpers ----
@@ -570,7 +562,7 @@ function TaskRow({
 }) {
   return (
     <div
-      // עוגן לקישור מכרטיס "עבודה בטיפול": /?tab=yogev#task-<id>
+      // Anchor for deep links: /?tab=shared#task-<id>
       id={`task-${task.id}`}
       draggable
       data-task-row
@@ -976,39 +968,38 @@ function DoneSection({
 // ---- The board ----
 
 // Deep-linkable tabs: /?tab=finance opens straight into כספים, refresh keeps
-// the current tab, and Bruno can attach exact links in his messages.
-// The non-task tabs, in nav order. Adding a tab = one entry here (label,
-// deep-link key, component) — it used to take edits in six places, which is
-// how the משפיענים tab shipped without surviving a refresh.
+// the current tab, and Hobi can attach exact links in her messages.
+// The tool tabs, in nav order. Adding a tab = one entry here plus its view below.
 const TOOL_TABS = [
-  { key: "plan", label: "🎯 תוכנית" },
-  { key: "seeding", label: "🎁 חלוקות" },
+  { key: "stock", label: "📦 מלאי" },
   { key: "finance", label: "💰 כספים" },
-  { key: "bizdev", label: "🚀 הפצה" },
-  { key: "ads", label: "📣 ממומן" },
   { key: "collab", label: "🤝 משפיענים" },
-  { key: "studio", label: "🎨 סטודיו" },
+  { key: "hobi", label: "🤖 הובי" },
+  { key: "settings", label: "⚙️ הגדרות" },
 ] as const;
-const TAB_KEYS = ["yogev", ...TOOL_TABS.map((t) => t.key), "bruno"];
-const isTaskView = (view: string) => view === "yogev";
+const DEFAULT_TAB = "shared";
+const TAB_KEYS: string[] = [...TASK_VIEWS.map((v) => v.key), ...TOOL_TABS.map((t) => t.key)];
+const isTaskView = (view: string) => TASK_VIEWS.some((v) => v.key === view);
 
 function TabFallback() {
   return <div className="py-24 text-center text-[var(--hob-faint)]">טוען…</div>;
 }
 
 function viewFromURL(): string {
-  if (typeof window === "undefined") return "yogev";
-  const t = new URLSearchParams(window.location.search).get("tab");
-  // קישורים ישנים ל-?tab=shared / ?tab=dima נוחתים על טאב המשימות.
-  return t && TAB_KEYS.includes(t) ? t : "yogev";
+  if (typeof window === "undefined") return DEFAULT_TAB;
+  const t = new URLSearchParams(window.location.search).get("tab") ?? "";
+  return t && TAB_KEYS.includes(t) ? t : DEFAULT_TAB;
 }
 
-// אחרי גרסה חדשה הלוח מתרענן לבד רק אחרי היעדרות ארוכה (ראו updateReady).
+// After a new version the board reloads on its own only after a long absence (see updateReady).
 const LONG_AWAY_MS = 10 * 60_000;
 
-export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
+export function HobBoard({ user, onAuthLost }: { user: BoardUser; onAuthLost: () => void }) {
   const queryClient = useQueryClient();
   const [view, setViewState] = useState(viewFromURL);
+  // The actor everywhere is the logged-in partner's key. The API ignores any
+  // client-sent actor and reads it from the session, so this is display only.
+  const actor = user.key;
   // Phones: the two-row nav eats a third of the screen, so it slides away
   // while scrolling down and comes back on the first scroll up. Other views
   // that stack sticky bars under it listen for "hob-nav".
@@ -1033,51 +1024,33 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
   const setView = (v: string) => {
     setViewState(v);
     const url = new URL(window.location.href);
-    if (v === "yogev") url.searchParams.delete("tab");
+    if (v === DEFAULT_TAB) url.searchParams.delete("tab");
     else url.searchParams.set("tab", v);
     window.history.replaceState(null, "", url);
   };
-  // Each bump of this counter tells SeedingView to open pop-up mode — the nav
-  // button jumps straight into quick-sale from anywhere on the board.
-  const [popupSeq, setPopupSeq] = useState(0);
-  // ✨ מצב ברונו: שיחה קולית על מסך מלא. "mini" = הכדור בפינה והלוח פתוח מתחת.
-  // ?live=1 פותח אותו ישר (קיצור דרך למסך הבית / לצילום).
-  const [live, setLive] = useState<"off" | "full" | "mini">(() =>
-    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("live") === "1" ? "full" : "off",
-  );
-  // מי עובד על המכשיר: נשלח עם כל שינוי (יומן "מי עשה מה" ועדכונים לשרשור של ברונו).
-  // undefined = עוד לא נקרא; היום זה תמיד "yogev".
-  const [actor, setActor] = useState<string | null | undefined>(undefined);
 
-  useEffect(() => {
-    // משתמש אחד: אין יותר שאלת "מי אתה?".
-    localStorage.setItem("hob_actor", "yogev");
-    setActor("yogev");
-  }, []);
-
-
-  // הלוח נמשך כל 30 שניות רק כשטאב המשימות פתוח והמסך גלוי (refetchIntervalInBackground
-  // כבוי: טלפון בכיס לא מושך כלום). חזרה למסך מרעננת מיד (refetchOnWindowFocus).
-  // משימות בארכיון לא נשלחות כאן; הן נטענות רק כשפותחים את הארכיון.
+  // The board is polled every 30 seconds only while a task tab is open and the
+  // screen is visible (refetchIntervalInBackground off: a phone in a pocket
+  // pulls nothing). Coming back to the screen refreshes at once.
+  // Archived tasks are not sent here; they load only when the archive opens.
   const taskTab = isTaskView(view);
   const boardQuery = useQuery({
     queryKey: ["board"],
     queryFn: () => api<{ ok: boolean; groups: Group[]; v?: string }>("/api/board"),
-    // בשאר הטאבים הלוח לא נמשך בכלל; מעבר לטאב המשימות טוען אותו (או מציג מהמטמון).
     enabled: taskTab,
     refetchInterval: taskTab ? 30_000 : false,
     refetchIntervalInBackground: false,
     retry: (count, error) => (error as Error).message !== "unauthorized" && count < 2,
   });
   const [showArchived, setShowArchived] = useState(false);
-  // ["board", "archived"]: כל invalidate של ["board"] (שינוי משימה) מרענן גם אותו.
+  // ["board", "archived"]: every invalidate of ["board"] (a task change) refreshes it too.
   const archivedQuery = useQuery({
     queryKey: ["board", "archived"],
     queryFn: () => api<{ ok: boolean; groups: Group[] }>("/api/board?archived=1"),
     enabled: showArchived && taskTab,
     retry: false,
   });
-  // בדיקת גרסה בשאר הטאבים: תשובה של כמה בתים כל 2 דקות, במקום כל הלוח.
+  // Version check on the other tabs: a few bytes every 2 minutes, not the whole board.
   const versionQuery = useQuery({
     queryKey: ["board-version"],
     queryFn: () => api<{ ok: boolean; v?: string }>("/api/board?only=v"),
@@ -1088,13 +1061,8 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
   });
 
   // A new deploy changes the server's build stamp. A visible page is never
-  // reloaded under the user (it threw the studio back to the top mid-scroll or
-  // mid-drag), and meanwhile a small "רענון" pill offers it.
-  // 28.9: reloading on *every* hide still made the studio jump — a second in
-  // another tab or a locked phone was enough, and the page came back reloaded
-  // at the top. Now it reloads on its own only after a long absence (the tab
-  // hidden LONG_AWAY_MS), when coming back to a fresh page is expected. The
-  // studio flushes its draft on visibilitychange before this listener runs.
+  // reloaded under the user; a small "רענון" pill offers it, and the page
+  // reloads on its own only after a long absence (the tab hidden LONG_AWAY_MS).
   const [updateReady, setUpdateReady] = useState(false);
   useEffect(() => {
     const serverV = taskTab ? boardQuery.data?.v : versionQuery.data?.v;
@@ -1104,9 +1072,7 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
   useEffect(() => {
     if (!updateReady) return;
     let hiddenAt = document.hidden ? Date.now() : 0;
-    let timer = document.hidden
-      ? window.setTimeout(() => window.location.reload(), LONG_AWAY_MS)
-      : 0;
+    let timer = document.hidden ? window.setTimeout(() => window.location.reload(), LONG_AWAY_MS) : 0;
     const onVis = () => {
       if (document.hidden) {
         hiddenAt = Date.now();
@@ -1126,46 +1092,45 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
     };
   }, [updateReady]);
 
-  // התג על טאב ברונו = הודעות שלא נקראו בשרשור (סיכומים, התראות מכירה, תזכורות).
-  // הכרעות פתוחות לא נספרות כאן: הן כבר מופיעות ב"היום שלך". מה נקרא נשמר לכל מכשיר
-  // (localStorage). הספירה מגיעה מ-/api/team?count=1, שאילתה קלה בלי Shopify.
-  const [brunoSeen, setBrunoSeen] = useState<number>(() => {
+  // The badge on Hobi's tab = unread messages in the thread (digests, sale
+  // alerts, reminders). What was read is kept per device (localStorage). The
+  // count comes from /api/assistant/chat?count=1; a route that does not
+  // answer it yet (404) just means no badge.
+  const [hobiSeen, setHobiSeen] = useState<number>(() => {
     try {
-      return Number(localStorage.getItem("hob_bruno_seen") || 0);
+      return Number(localStorage.getItem("hob_hobi_seen") || 0);
     } catch {
       return 0;
     }
   });
-  const brunoUnreadQuery = useQuery({
-    queryKey: ["bruno-unread", brunoSeen],
-    queryFn: () => api<{ ok: boolean; unread: number; open: number }>(`/api/team?count=1&after=${brunoSeen}`),
+  const hobiUnreadQuery = useQuery({
+    queryKey: ["hobi-unread", hobiSeen],
+    queryFn: () => api<{ ok: boolean; unread?: number }>(`/api/assistant/chat?count=1&after=${hobiSeen}`).catch((e: Error) => (e.message === "unauthorized" ? Promise.reject(e) : { ok: false, unread: 0 })),
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
-    enabled: view !== "bruno",
+    enabled: view !== "hobi",
     retry: false,
   });
-  const brunoUnread = view === "bruno" ? 0 : (brunoUnreadQuery.data?.unread ?? 0);
-  const markBrunoSeen = (maxId: number) => {
-    if (maxId <= brunoSeen) return;
-    setBrunoSeen(maxId);
+  const hobiUnread = view === "hobi" ? 0 : (hobiUnreadQuery.data?.unread ?? 0);
+  const markHobiSeen = (maxId: number) => {
+    if (maxId <= hobiSeen) return;
+    setHobiSeen(maxId);
     try {
-      localStorage.setItem("hob_bruno_seen", String(maxId));
+      localStorage.setItem("hob_hobi_seen", String(maxId));
     } catch {
-      /* private mode — the badge just stays session-local */
+      /* private mode: the badge just stays session-local */
     }
   };
 
   useEffect(() => {
-    if (boardQuery.error && (boardQuery.error as Error).message === "unauthorized") {
-      onAuthLost();
-    }
-  }, [boardQuery.error, onAuthLost]);
+    const errs = [boardQuery.error, versionQuery.error, hobiUnreadQuery.error];
+    if (errs.some((e) => e && (e as Error).message === "unauthorized")) onAuthLost();
+  }, [boardQuery.error, versionQuery.error, hobiUnreadQuery.error, onAuthLost]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["board"] });
 
   const patchMutation = useMutation({
-    mutationFn: ({ id, patch }: { id: number; patch: Partial<Task> }) =>
-      post("/api/task/update", { id, patch, actor: actor ?? "" }),
+    mutationFn: ({ id, patch }: { id: number; patch: Partial<Task> }) => post("/api/task/update", { id, patch }),
     onMutate: async ({ id, patch }) => {
       await queryClient.cancelQueries({ queryKey: ["board"] });
       queryClient.setQueryData<{ ok: boolean; groups: Group[] }>(["board"], (old) => {
@@ -1181,10 +1146,7 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
               if (g.id === patch.group_id && moved) tasks.push({ ...moved, ...stamped });
               return { ...g, tasks };
             }
-            return {
-              ...g,
-              tasks: g.tasks.map((t) => (t.id === id ? { ...t, ...stamped } : t)),
-            };
+            return { ...g, tasks: g.tasks.map((t) => (t.id === id ? { ...t, ...stamped } : t)) };
           }),
         };
       });
@@ -1194,26 +1156,17 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
   });
 
   const addMutation = useMutation({
-    mutationFn: ({ groupId, title }: { groupId: number; title: string }) =>
-      post("/api/task/add", { groupId, title, actor: actor ?? "" }),
+    mutationFn: ({ groupId, title }: { groupId: number; title: string }) => post("/api/task/add", { groupId, title }),
     onSuccess: () => toast("המשימה נוספה ✓"),
     onSettled: invalidate,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => post("/api/task/del", { id, actor: actor ?? "" }),
+    mutationFn: (id: number) => post("/api/task/del", { id }),
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: ["board"] });
       queryClient.setQueryData<{ ok: boolean; groups: Group[] }>(["board"], (old) =>
-        old
-          ? {
-              ...old,
-              groups: old.groups.map((g) => ({
-                ...g,
-                tasks: g.tasks.filter((t) => t.id !== id),
-              })),
-            }
-          : old,
+        old ? { ...old, groups: old.groups.map((g) => ({ ...g, tasks: g.tasks.filter((t) => t.id !== id) })) } : old,
       );
     },
     onSuccess: () => toast("המשימה נמחקה"),
@@ -1222,21 +1175,19 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
 
   const { sections, doneItems, archivedItems, archivedTotal } = useMemo(() => {
     const raw = boardQuery.data?.groups ?? [];
-    const activeView = VIEWS.find((v) => v.key === view) ?? VIEWS[0];
-    const byId = new Map(raw.map((g) => [g.id, g]));
-    // משימות בארכיון מגיעות מבקשה נפרדת, רק אחרי שפתחו את הארכיון.
+    // Data-driven views: the groups whose `view` is the current tab, in board order.
+    const viewGroups = raw.filter((g) => g.view === view);
+    // Archived tasks come from a separate request, only after the archive was opened.
     const archivedById = new Map((archivedQuery.data?.groups ?? []).map((g) => [g.id, g.tasks]));
     const sections: { group: Group; tasks: Task[]; statsLabel: string }[] = [];
     const doneItems: { task: Task; color: string }[] = [];
     const archivedItems: { task: Task; color: string }[] = [];
     let archivedTotal = 0;
-    for (const id of activeView.groupIds) {
-      const g = byId.get(id);
-      if (!g) continue;
+    for (const g of viewGroups) {
       const hiddenArchived = g.archived_count ?? 0;
       for (const t of g.tasks) {
         if (t.status === "archived") {
-          // רק אחרי עדכון אופטימי (הועברה לארכיון עכשיו); הטעינה הרגילה לא מחזירה כאלה.
+          // Only after an optimistic update (just archived); a normal load does not return these.
           archivedItems.push({ task: t, color: g.color });
           archivedTotal++;
         } else if (t.status === "done") {
@@ -1247,25 +1198,19 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
         }
       }
       archivedTotal += hiddenArchived;
-      for (const t of archivedById.get(id) ?? []) {
-        // עדכון אופטימי יכול להשאיר עותק ישן: משימה שכבר חזרה ללוח לא מוצגת פעמיים.
+      for (const t of archivedById.get(g.id) ?? []) {
+        // An optimistic update can leave an old copy: a task already back on the board is not shown twice.
         if (t.status === "archived" && !g.tasks.some((x) => x.id === t.id)) archivedItems.push({ task: t, color: g.color });
       }
       const total = g.tasks.length + hiddenArchived;
-      const doneCount = g.tasks.filter(
-        (t) => t.status === "done" || t.status === "archived",
-      ).length + hiddenArchived;
+      const doneCount = g.tasks.filter((t) => t.status === "done" || t.status === "archived").length + hiddenArchived;
       sections.push({
         group: g,
-        tasks: sortTasks(
-          g.tasks.filter((t) => t.status !== "done" && t.status !== "archived"),
-        ),
-        statsLabel:
-          total > 0 ? `${doneCount}/${total} בוצעו` : "אין משימות",
+        tasks: sortTasks(g.tasks.filter((t) => t.status !== "done" && t.status !== "archived")),
+        statsLabel: total > 0 ? `${doneCount}/${total} בוצעו` : "אין משימות",
       });
     }
-    const newestFirst = (a: { task: Task }, b: { task: Task }) =>
-      a.task.updated_at < b.task.updated_at ? 1 : -1;
+    const newestFirst = (a: { task: Task }, b: { task: Task }) => (a.task.updated_at < b.task.updated_at ? 1 : -1);
     doneItems.sort(newestFirst);
     archivedItems.sort(newestFirst);
     return { sections, doneItems, archivedItems, archivedTotal };
@@ -1293,27 +1238,22 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
     patchMutation.mutate({ id, patch: { group_id: groupId } });
   };
 
-  const moveTargets = sections.map(({ group }) => ({
-    id: group.id,
-    title: group.title,
-    color: group.color,
-  }));
+  // A task can be moved to any group on the board, not only in the current tab
+  // (that is how it goes from "משותף" to one partner's list). Current tab first.
+  const moveTargets = useMemo(() => {
+    const all = boardQuery.data?.groups ?? [];
+    const label = (g: Group) => (g.view === view ? g.title : `${g.title} · ${TASK_VIEWS.find((v) => v.key === g.view)?.label ?? g.view}`);
+    return [...all.filter((g) => g.view === view), ...all.filter((g) => g.view !== view)].map((g) => ({ id: g.id, title: label(g), color: g.color }));
+  }, [boardQuery.data, view]);
 
-  // סגנון טאב בסרגל העליון — הסרגל תמיד שחור, בשני מצבי הערכה,
-  // אז הצבעים כאן ליטרליים בכוונה (לא טוקנים שמתהפכים בשנהב).
+  // Tab style in the top bar. The bar is always the brown --hob-nav in both
+  // themes, so the text colors are literal on purpose.
   const topTab = (active: boolean) =>
     `flex-none whitespace-nowrap rounded-lg px-3 py-1.5 text-[13.5px] font-semibold transition-colors ${
-      active
-        ? "bg-[#f2f0ec] font-extrabold text-[#0d0d0d]"
-        : "text-[#a8a49c] hover:bg-white/10 hover:text-[#f2f0ec]"
+      active ? "bg-[#faf6e9] font-extrabold text-[#4f463c]" : "text-[#e8dfcc] hover:bg-white/10 hover:text-white"
     }`;
-  const ghostBtn =
-    "flex-none rounded-lg px-2.5 py-1.5 text-[13.5px] text-[#a8a49c] transition-colors hover:bg-white/10 hover:text-[#f2f0ec]";
-  const hebToday = new Intl.DateTimeFormat("he-IL", {
-    weekday: "long",
-    day: "numeric",
-    month: "numeric",
-  }).format(new Date());
+  const ghostBtn = "flex-none rounded-lg px-2.5 py-1.5 text-[13.5px] text-[#e8dfcc] transition-colors hover:bg-white/10 hover:text-white";
+  const hebToday = new Intl.DateTimeFormat("he-IL", { weekday: "long", day: "numeric", month: "numeric" }).format(new Date());
 
   return (
     <>
@@ -1321,202 +1261,141 @@ export function HobBoard({ onAuthLost }: { onAuthLost: () => void }) {
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-[#0a0a0a] px-3 py-1.5 text-[12px] text-white shadow-lg ring-1 ring-white/20"
+          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-[var(--hob-nav)] px-3 py-1.5 text-[12px] text-white shadow-lg ring-1 ring-white/20"
         >
           גרסה חדשה · רענון
         </button>
       )}
-      {/* Phones: wrap to two visible rows — a hidden horizontal scroll buried
-          the 🤝/ברונו tabs and their badges. Desktop keeps the single row. */}
+      {/* Phones: wrap to two visible rows so no tab hides in a sideways scroll. Desktop keeps one row. */}
       <nav
-        className={`sticky top-0 z-40 flex flex-wrap items-center gap-1 bg-[#0a0a0a] px-3 py-1.5 transition-transform duration-200 sm:h-12 sm:flex-nowrap sm:overflow-x-auto sm:py-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+        className={`sticky top-0 z-40 flex flex-wrap items-center gap-1 bg-[var(--hob-nav)] px-3 py-1.5 transition-transform duration-200 sm:h-12 sm:flex-nowrap sm:overflow-x-auto sm:py-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
           navHidden ? "-translate-y-full sm:translate-y-0" : ""
         }`}
       >
-        <img
-          src="/assets/segula-logo-white.png"
-          alt="SEGULA"
-          className="h-[17px] w-auto flex-none pe-2"
-        />
-        {VIEWS.map((v) => (
-          <button
-            key={v.key}
-            type="button"
-            onClick={() => setView(v.key)}
-            className={topTab(view === v.key)}
-          >
-            {v.label.split(" — ")[0]}
+        <img src="/assets/hob-logo-light.png" alt="hob" className="h-[20px] w-auto flex-none pe-2" />
+        {TASK_VIEWS.map((v) => (
+          <button key={v.key} type="button" onClick={() => setView(v.key)} className={topTab(view === v.key)}>
+            {v.label}
           </button>
         ))}
         <span className="mx-1 h-[18px] w-px flex-none bg-white/15" aria-hidden />
         {TOOL_TABS.map((t) => (
           <button key={t.key} type="button" onClick={() => setView(t.key)} className={topTab(view === t.key)}>
             {t.label}
+            {t.key === "hobi" && hobiUnread > 0 && (
+              <span className="hob-mono ms-1.5 inline-flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-[#e2445c] px-1 text-[10.5px] font-bold text-white">
+                {hobiUnread > 9 ? "9+" : hobiUnread}
+              </span>
+            )}
           </button>
         ))}
-        <span className="mx-1 h-[18px] w-px flex-none bg-white/15" aria-hidden />
-        <button type="button" onClick={() => setView("bruno")} className={topTab(view === "bruno")}>
-          🤖 ברונו
-          {brunoUnread > 0 && (
-            <span className="hob-mono ms-1.5 inline-flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-[#e2445c] px-1 text-[10.5px] font-bold text-white">
-              {brunoUnread > 9 ? "9+" : brunoUnread}
-            </span>
-          )}
-        </button>
         <span className="min-w-2 flex-1" aria-hidden />
-        <button
-          type="button"
-          onClick={() => setLive("full")}
-          title="מצב ברונו: לדבר עם ברונו בקול, על מסך מלא"
-          aria-label="מצב ברונו"
-          className={live !== "off" ? "flex-none rounded-lg bg-[#4fd1ff] px-2.5 py-1.5 text-[13.5px] text-[#050a18]" : ghostBtn}
-        >
-          ✨
+        <span className="hidden flex-none items-center gap-1.5 pe-1 text-[12.5px] text-[#e8dfcc] sm:flex" title="מחוברת">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold text-white" style={{ backgroundColor: PARTNER[user.key].color }}>
+            {PARTNER[user.key].letter}
+          </span>
+          {user.name}
+        </span>
+        <button type="button" onClick={toggleTheme} title="כהה / בהיר" className={ghostBtn}>
+          🌓
         </button>
         <button
           type="button"
           onClick={() => setDemo(!demoOn)}
-          title="מצב הדגמה — מטשטש את מספרי העסק"
-          className={
-            demoOn
-              ? "flex-none rounded-lg bg-[#fdab3d] px-2.5 py-1.5 text-[13.5px] font-bold text-[#14142b]"
-              : ghostBtn
-          }
+          title="מצב הדגמה: מטשטש את מספרי העסק"
+          className={demoOn ? "flex-none rounded-lg bg-[#fdab3d] px-2.5 py-1.5 text-[13.5px] font-bold text-[#14142b]" : ghostBtn}
         >
           🥷
-        </button>
-        <button type="button" onClick={toggleTheme} title="כהה / שנהב" className={ghostBtn}>
-          🌓
         </button>
         <button type="button" onClick={logout} className={ghostBtn}>
           יציאה
         </button>
       </nav>
       <div className="mx-auto max-w-6xl px-4 pb-24 pt-4 sm:px-6">
-      {/* שורת הקשר — התאריך מימין, הסלוגן משמאל. הלוגו והטאבים עברו לסרגל
-          העליון (24.8); כפתור 🎪 הוסר עוד קודם לבקשת יוגב — popupSeq נשאר
-          מחווט למקרה שיחזור. */}
-      <div className="mb-5 flex items-center justify-between gap-3">
-        <div className="text-xs text-[var(--hob-faint)]">
-          <b className="font-semibold text-[var(--hob-soft)]">{hebToday}</b>
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div className="text-xs text-[var(--hob-faint)]">
+            <b className="font-semibold text-[var(--hob-soft)]">{hebToday}</b>
+          </div>
+          <div className="text-xs text-[var(--hob-faint)] sm:hidden">{user.name}</div>
         </div>
-        <div
-          dir="ltr"
-          className="text-[11px] font-extrabold uppercase italic tracking-[0.16em] text-[var(--hob-faint)]"
-        >
-          we do what we want
-        </div>
-      </div>
 
-      <Suspense fallback={<TabFallback />}>
-        {/* "היום שלך" יושב בראש טאב המשימות: מה דורש טיפול ומה הפעולה הבאה. */}
-        {isTaskView(view) && <TodayView onAuthLost={onAuthLost} />}
+        <Suspense fallback={<TabFallback />}>
+          {/* "היום שלכן" sits at the top of every task tab: what needs handling and the next action. */}
+          {taskTab && <TodayView onAuthLost={onAuthLost} />}
 
-        {view === "seeding" && (
-          <SeedingView actor={actor ?? ""} onAuthLost={onAuthLost} popupSignal={popupSeq} />
-        )}
+          {view === "stock" && <SeedingView actor={actor} onAuthLost={onAuthLost} />}
 
-        {view === "finance" && <FinanceView actor={actor ?? ""} onAuthLost={onAuthLost} />}
+          {view === "finance" && <FinanceView actor={actor} onAuthLost={onAuthLost} />}
 
-        {view === "bizdev" && <BizdevView onAuthLost={onAuthLost} />}
+          {view === "collab" && <InfluencersView onAuthLost={onAuthLost} />}
 
-        {view === "ads" && <CampaignView onAuthLost={onAuthLost} />}
+          {view === "hobi" && <AssistantChatView actor={actor} onAuthLost={onAuthLost} onSeen={markHobiSeen} />}
 
-        {view === "collab" && <InfluencersView onAuthLost={onAuthLost} />}
-
-        {view === "studio" && <StudioView actor={actor ?? ""} onAuthLost={onAuthLost} />}
-
-        {view === "plan" && <PlanView onAuthLost={onAuthLost} />}
-
-        {view === "bruno" && (
-          <TeamView
-            onAuthLost={onAuthLost}
-            chat={(onClose) => (
-              <AssistantChatView actor={actor ?? ""} onAuthLost={onAuthLost} onSeen={markBrunoSeen} embedded onClose={onClose} />
-            )}
-          />
-        )}
-      </Suspense>
-
-      {live !== "off" && (
-        <Suspense fallback={null}>
-          <BrunoLive
-            actor={actor ?? "yogev"}
-            mini={live === "mini"}
-            onMinimize={() => setLive("mini")}
-            onExpand={() => setLive("full")}
-            onClose={() => setLive("off")}
-            onGoto={(tab) => setView(TAB_KEYS.includes(tab) ? tab : "yogev")}
-            onAuthLost={onAuthLost}
-          />
+          {view === "settings" && <SettingsView user={user} onAuthLost={onAuthLost} />}
         </Suspense>
-      )}
 
-      {isTaskView(view) && boardQuery.isLoading && (
-        <div className="py-24 text-center text-[var(--hob-faint)]">טוען את הלוח…</div>
-      )}
-      {isTaskView(view) && boardQuery.isError && !boardQuery.data && (boardQuery.error as Error).message !== "unauthorized" && (
-        <div className="py-24 text-center text-[#e2445c]">
-          שגיאה בטעינת הלוח — נסו לרענן את הדף.
-        </div>
-      )}
-      {/* A failed 30s poll on flaky cellular is routine — with data on screen it
-          gets a quiet hint that clears itself, not a red wall. */}
-      {isTaskView(view) && boardQuery.isError && !!boardQuery.data && (boardQuery.error as Error).message !== "unauthorized" && (
-        <div className="mb-2 text-center text-[12px] text-[#e0a13c]">
-          אין חיבור כרגע — מנסים שוב ברקע…
-        </div>
-      )}
+        {taskTab && boardQuery.isLoading && <div className="py-24 text-center text-[var(--hob-faint)]">טוען את הלוח…</div>}
+        {taskTab && boardQuery.isError && !boardQuery.data && (boardQuery.error as Error).message !== "unauthorized" && (
+          <div className="py-24 text-center text-[#e2445c]">שגיאה בטעינת הלוח. נסו לרענן את הדף.</div>
+        )}
+        {/* A failed 30s poll on flaky cellular is routine: with data on screen it gets a quiet hint. */}
+        {taskTab && boardQuery.isError && !!boardQuery.data && (boardQuery.error as Error).message !== "unauthorized" && (
+          <div className="mb-2 text-center text-[12px] text-[#e0a13c]">אין חיבור כרגע. מנסים שוב ברקע…</div>
+        )}
 
-      {isTaskView(view) &&
-      sections.map(({ group, tasks, statsLabel }) => (
-        <GroupSection
-          key={group.id}
-          group={group}
-          tasks={tasks}
-          statsLabel={statsLabel}
-          moveTargets={moveTargets}
-          onPatch={handlePatch}
-          onDelete={handleDelete}
-          onAdd={(groupId, title) => addMutation.mutate({ groupId, title })}
-          onMove={handleMove}
-        />
-      ))}
+        {taskTab && boardQuery.data && sections.length === 0 && (
+          <div className="py-16 text-center text-sm text-[var(--hob-faint)]">אין קבוצות בטאב הזה.</div>
+        )}
 
-      {isTaskView(view) && (doneItems.length > 0 || archivedTotal > 0) && (
-        <div className="mt-12">
-          {doneItems.length > 0 && (
-            <DoneSection
-              title="✓ בוצעו"
-              titleClass="text-[var(--hob-good)]"
-              subtitle={`${doneItems.length} משימות שהושלמו השבוע — שינוי סטטוס מחזיר אותן לקבוצה שלהן`}
-              items={doneItems}
+        {taskTab &&
+          sections.map(({ group, tasks, statsLabel }) => (
+            <GroupSection
+              key={group.id}
+              group={group}
+              tasks={tasks}
+              statsLabel={statsLabel}
               moveTargets={moveTargets}
               onPatch={handlePatch}
               onDelete={handleDelete}
+              onAdd={(groupId, title) => addMutation.mutate({ groupId, title })}
               onMove={handleMove}
             />
-          )}
-          {archivedTotal > 0 && (
-            <DoneSection
-              title="🗄 ארכיון"
-              titleClass="text-[var(--hob-soft)]"
-              subtitle={`${archivedTotal} משימות · הועברו ידנית או בוצעו לפני יותר משבוע${showArchived && archivedQuery.isFetching && !archivedQuery.data ? " · טוען…" : ""}`}
-              defaultCollapsed
-              onToggle={(open) => open && setShowArchived(true)}
-              items={archivedItems}
-              moveTargets={moveTargets}
-              onPatch={handlePatch}
-              onDelete={handleDelete}
-              onMove={handleMove}
-            />
-          )}
-        </div>
-      )}
+          ))}
 
-      <footer dir="ltr" className="mt-10 text-center text-[10.5px] uppercase tracking-[0.22em] text-[var(--hob-faint)]">
-        SEGULA CLUB &amp; Co.
-      </footer>
+        {taskTab && (doneItems.length > 0 || archivedTotal > 0) && (
+          <div className="mt-12">
+            {doneItems.length > 0 && (
+              <DoneSection
+                title="✓ בוצעו"
+                titleClass="text-[var(--hob-good)]"
+                subtitle={`${doneItems.length} משימות שהושלמו השבוע. שינוי סטטוס מחזיר אותן לקבוצה שלהן`}
+                items={doneItems}
+                moveTargets={moveTargets}
+                onPatch={handlePatch}
+                onDelete={handleDelete}
+                onMove={handleMove}
+              />
+            )}
+            {archivedTotal > 0 && (
+              <DoneSection
+                title="🗄 ארכיון"
+                titleClass="text-[var(--hob-soft)]"
+                subtitle={`${archivedTotal} משימות · הועברו ידנית או בוצעו לפני יותר משבוע${showArchived && archivedQuery.isFetching && !archivedQuery.data ? " · טוען…" : ""}`}
+                defaultCollapsed
+                onToggle={(open) => open && setShowArchived(true)}
+                items={archivedItems}
+                moveTargets={moveTargets}
+                onPatch={handlePatch}
+                onDelete={handleDelete}
+                onMove={handleMove}
+              />
+            )}
+          </div>
+        )}
+
+        <footer dir="ltr" className="mt-10 text-center text-[10.5px] uppercase tracking-[0.22em] text-[var(--hob-faint)]">
+          House of Bais
+        </footer>
       </div>
     </>
   );

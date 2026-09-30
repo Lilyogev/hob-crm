@@ -16,8 +16,15 @@ export default defineConfig(() => ({
   // The server bundle runs as a Cloudflare Worker: there is no node_modules at
   // runtime, so every npm dependency is bundled in. `cloudflare:workers` is a
   // runtime built-in and stays external.
-  ssr: { noExternal: true, external: ["cloudflare:workers"] },
+  ssr: { noExternal: true as const, external: ["cloudflare:workers"] },
   build: { rollupOptions: { external: [/^cloudflare:/] } },
+  // The Worker entry must export only the fetch handler and the Durable
+  // Object class. With code splitting, Rollup turns server.js into a shared
+  // chunk that re-exports internal helpers, and workerd refuses to start
+  // ("not of type function or ExportedHandler"). One file for the SSR bundle.
+  environments: {
+    ssr: { build: { rollupOptions: { output: { inlineDynamicImports: true } } } },
+  },
   plugins: [
     // TanStack Start must run before React's plugin. The build emits
     // dist/server/server.js (Workers-shaped, `export default { fetch }`) plus

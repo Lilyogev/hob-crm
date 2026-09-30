@@ -1,17 +1,12 @@
-// 💰 Finance tab: shared expense log, live budget-vs-actual with traffic
-// lights, and an interactive profit simulator — the web version of the
-// partners' SEGULA-כספים.xlsx workbook.
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { isDemo } from "../demo";
-import { parseMoney } from "../board";
+// 📈 Sales pace (7 days vs the 7 before, 8 weeks of bars) and the store's
+// traffic card. Both read only real data: the ledger and the Shopify DO.
+import { useQuery } from "@tanstack/react-query";
 
-import { Kpi, NIS, type SalesPulse, Sh, api } from "./shared";
+import { Kpi, NIS, type SalesPulse, Sh } from "./shared";
 
 const shortDay = (d: string) => `${Number(d.slice(8, 10))}.${Number(d.slice(5, 7))}`;
 
-// הדופק מגיע מהשרת (getSalesPulse): 7 ימים ישראליים כולל היום, אותה הגדרה כמו
-// ב"היום שלך". עד 20.9 זה חושב כאן לפי שעון המכשיר, והראה 0 כש"היום שלך" הראה 2.
+// הדופק מגיע מהשרת (getSalesPulse): 7 ימים ישראליים כולל היום, אותה הגדרה כמו ב"היום שלך".
 export function PaceStrip({
   pulse,
   totalSpent,
@@ -28,7 +23,7 @@ export function PaceStrip({
           <h3 className="text-base font-bold text-[var(--hob-ink)]">📈 דופק מכירות</h3>
           <span className="text-[11px] text-[var(--hob-faint)]">לא נבדק</span>
         </div>
-        <div className="text-[12px] text-[var(--hob-soft)]">לא הצלחתי לחשב את הדופק עכשיו. זה לא אומר שאין מכירות: רענן, או בדוק את ספר המכירות.</div>
+        <div className="text-[12px] text-[var(--hob-soft)]">לא הצלחתי לחשב את הדופק עכשיו. זה לא אומר שאין מכירות: רעננו, או בדקו את ספר המכירות.</div>
       </div>
     );
   }
@@ -77,8 +72,8 @@ export function PaceStrip({
           sub={gap > 0 ? `חסרים ${NIS(gap)} · בהנחת קצב קבוע וללא הוצאות נוספות` : "הפדיון עבר את ההוצאות"}
         />
       </div>
-      {/* The number above is a verdict; this line is the lever. Same maths,
-          one more sale a day — so "207 days" stops being a wall. */}
+      {/* The number above is a verdict; this line is the lever: same maths,
+          one more sale a day. */}
       {daysToCover !== null && last7.units > 0 && (
         <div className="mt-2 text-[12px] text-[var(--hob-soft)]">
           מה מקצר את זה: ב-<b className="text-[var(--hob-ink)]">{last7.units * 2}</b> יחידות בשבוע
@@ -115,8 +110,7 @@ export function PaceStrip({
 }
 
 // ---- Store traffic: sessions and conversion, this week vs last ----
-// Conversion is the real battle (past drops ran ~0.24%); this is the first
-// place it is visible on the site. Data flows Shopify → DO → D1 cache → here,
+// Conversion is the real battle. Data flows Shopify → DO → D1 cache → here,
 // refreshed at most every 45 minutes server-side.
 type TrafficWeek = { sessions: number; purchases: number; conversionPct: number } | null;
 
@@ -182,5 +176,3 @@ export function TrafficCard() {
     </div>
   );
 }
-
-// ---- Main view ----

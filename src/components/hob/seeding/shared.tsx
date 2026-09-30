@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type DragEvent, type KeyboardEvent } from "react";
 import { isDemo } from "../demo";
+import { LOCATIONS as PARTNER_LOCATIONS, LOCATION_LABEL, PARTNER, type Location } from "../../../lib/partners";
 
 import {
   DeleteButton,
@@ -38,25 +39,39 @@ export type SeedItem = {
   name: string;
   size: string;
   price: number;
+  unit_cost: number;
   collection: string;
+  image: string;
+  web_status: string;
+  web_reason: string;
   given: number;
   sold: number;
   updated_at: string;
   stock: StockRow[];
 };
 
-// Collections split the stock screen: the live drop is counted apart from
-// previous-drop leftovers and side products, because "how much is left" only
-// means something per collection. Order here is the order on screen.
-export const COLLECTIONS = [
-  { key: "drop4", label: "דרופ 4 · כדורגל", short: "דרופ 4", color: "#00854d" },
-  { key: "drop3", label: "דרופ 3 · DREAMERS COLLECTIVE", short: "דרופ 3", color: "#0073ea" },
-  { key: "prev", label: "דרופים קודמים", short: "קודמים", color: "#a25ddc" },
-  { key: "side", label: "אחר · צד", short: "אחר", color: "#676879" },
-] as const;
+// Collections are free text on the item ('main' by default). The list on
+// screen is whatever exists on items, in first-seen order; each gets a color
+// from a fixed palette so a collection keeps its color between renders.
+export const DEFAULT_COLLECTION = "main";
+const COLLECTION_PALETTE = ["#0073ea", "#00854d", "#a25ddc", "#fdab3d", "#e2445c", "#579bfc", "#7f5347", "#676879"];
 
 export function itemCollection(i: SeedItem): string {
-  return COLLECTIONS.some((c) => c.key === i.collection) ? i.collection : "drop3";
+  return (i.collection || "").trim() || DEFAULT_COLLECTION;
+}
+
+export function collectionLabel(key: string): string {
+  return key === DEFAULT_COLLECTION ? "קולקציה ראשית" : key;
+}
+
+export type CollectionGroup = { key: string; label: string; short: string; color: string };
+
+/** Distinct collections in the order they appear, with a stable color each. */
+export function collectionGroups(items: SeedItem[], known: string[] = []): CollectionGroup[] {
+  const keys: string[] = [];
+  for (const k of [...known, ...items.map(itemCollection)]) if (k && !keys.includes(k)) keys.push(k);
+  if (!keys.length) keys.push(DEFAULT_COLLECTION);
+  return keys.map((key, idx) => ({ key, label: collectionLabel(key), short: collectionLabel(key), color: COLLECTION_PALETTE[idx % COLLECTION_PALETTE.length] }));
 }
 
 // Stock is a size matrix per LOCATION: the item row shows summed totals, the
@@ -71,18 +86,46 @@ export const BUCKETS = [
   { col: "qty_xxl", label: "XXL" },
 ] as const;
 
-export const LOCATIONS = [
-  { key: "room", label: "חדר", icon: "🏠" },
-  { key: "car", label: "אוטו של יוגב", icon: "🚗" },
-  { key: "stores", label: "אצל חנויות", icon: "🏬" },
-] as const;
+// Stock sits with one of the two partners (partners.ts). icon = the
+// partner's initial in her color, so the two locations read at a glance.
+export const LOCATIONS: readonly { key: Location; label: string; short: string; icon: string; color: string }[] = PARTNER_LOCATIONS.map((k) => ({
+  key: k,
+  label: LOCATION_LABEL[k],
+  short: PARTNER[k].label,
+  icon: PARTNER[k].letter,
+  color: PARTNER[k].color,
+}));
+export const DEFAULT_LOCATION: Location = "avia";
 
-// "אצל דימה" closed on 27.9.2026 (the business is Yogev's; its stock moved to the room).
-// Kept only as a label so old rows still read correctly.
-const LOC_META: Record<string, { label: string; icon: string }> = {
-  ...Object.fromEntries(LOCATIONS.map((l) => [l.key, { label: l.label, icon: l.icon }])),
-  dima: { label: "אצל דימה (נסגר)", icon: "📦" },
+const LOC_META: Record<string, { label: string; icon: string; color: string }> = Object.fromEntries(
+  LOCATIONS.map((l) => [l.key, { label: l.label, icon: l.icon, color: l.color }]),
+);
+
+export function locationMeta(key: string): { label: string; icon: string; color: string } {
+  return LOC_META[key] ?? { label: key, icon: "?", color: "#676879" };
+}
+
+// Small colored initial for a location (used wherever a location is named).
+export function LocDot({ loc }: { loc: string }) {
+  const m = locationMeta(loc);
+  return (
+    <span
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+      style={{ backgroundColor: m.color }}
+      aria-hidden
+    >
+      {m.icon}
+    </span>
+  );
+}
+
+// Who handled a sale: '' (store / unknown) or a partner. Same colors as the
+// task-board owner pills.
+export const HANDLED_BY: Record<string, { label: string; bg: string; fg: string }> = {
+  "": { label: "לא צוין", bg: "#c4c4c4", fg: "#ffffff" },
+  ...Object.fromEntries(PARTNER_LOCATIONS.map((k) => [k, { label: PARTNER[k].label, bg: PARTNER[k].color, fg: "#ffffff" }])),
 };
+export const HANDLED_BY_ORDER = ["", ...PARTNER_LOCATIONS];
 
 const EMPTY_ROW = { qty: 0, qty_xs: 0, qty_s: 0, qty_m: 0, qty_l: 0, qty_xl: 0, qty_xxl: 0 };
 
@@ -136,11 +179,14 @@ export type SeedSale = {
   channel: string;
   note: string;
   sold_at: string;
+  order_ref: string;
+  delivery: string;
+  handled_by: string;
   position: number;
   updated_at: string;
 };
 
-export type SeedingData = { ok: boolean; items: SeedItem[]; gifts: SeedGift[]; sales: SeedSale[] };
+export type SeedingData = { ok: boolean; items: SeedItem[]; collections: string[]; gifts: SeedGift[]; sales: SeedSale[] };
 
 // One line of a multi-item gift/sale being composed (price is per unit, ₪;
 // size is the size taken — inventory rows are per-color totals).
@@ -151,13 +197,13 @@ type Line = { itemId: number; qty: number; size: string; price: number };
 export const KIND: Record<string, { label: string; bg: string; fg: string }> = {
   influencer: { label: "משפיען", bg: "#a25ddc", fg: "#ffffff" },
   friend: { label: "חבר", bg: "#579bfc", fg: "#ffffff" },
-  other: { label: "אחר", bg: "#8e8e8e", fg: "#ffffff" }, // האפור של סגולה (יוגב, 28.9)
+  other: { label: "אחר", bg: "#8e8e8e", fg: "#ffffff" },
 };
 const KIND_ORDER = ["influencer", "friend", "other"];
 
-// Custom kinds ("צלם", "מייסד", "דוגמנית"...) keep their own label but share
-// the "אחר" color (Yogev, 28.9): only influencers and friends stand out, and the
-// rows still group by kind so each custom kind sits together.
+// Custom kinds ("צלמת", "מייסדת", "דוגמנית"...) keep their own label but share
+// the "אחר" color: only influencers and friends stand out, and the rows still
+// group by kind so each custom kind sits together.
 
 // A kind typed by hand as a preset's label ("משפיען") is that preset.
 export function normalizeKind(kind: string): string {
@@ -224,12 +270,11 @@ export const SHIP_RANK: Record<string, number> = {
 export const PAY_METHOD: Record<string, { label: string; bg: string; fg: string }> = {
   "": { label: "לא סומן", bg: "#c4c4c4", fg: "#ffffff" },
   shopify: { label: "🛍 שופיפיי", bg: "#0073ea", fg: "#ffffff" },
-  hyp: { label: "💳 Hyp", bg: "#14142b", fg: "#ffffff" },
   bit: { label: "📱 ביט", bg: "#a25ddc", fg: "#ffffff" },
   cash: { label: "💵 מזומן", bg: "#00c875", fg: "#ffffff" },
   transfer: { label: "🏦 העברה", bg: "#fdab3d", fg: "#ffffff" },
 };
-export const PAY_METHOD_ORDER = ["", "shopify", "hyp", "bit", "cash", "transfer"];
+export const PAY_METHOD_ORDER = ["", "shopify", "bit", "cash", "transfer"];
 
 export const ITEM_COLOR = "#0073ea";
 export const GIFT_COLOR = "#a25ddc";
@@ -310,21 +355,64 @@ export function CollectionHeader({
   );
 }
 
-// Moving an item between collections — the only edit that needs a fixed set
-// of options, so it stays a plain select instead of the inline-text pattern.
-export function CollectionPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+// Collection picker: the existing collections plus "new…" which opens a
+// free-text input. No fixed list anywhere; a collection exists as long as an
+// item carries it.
+const NEW_COLLECTION = "__new__";
+export function CollectionPicker({
+  value,
+  options,
+  onChange,
+  compact,
+}: {
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+  compact?: boolean;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  const list = options.includes(value) ? options : [...options, value];
+  const commit = () => {
+    const v = draft.trim().slice(0, 40);
+    setAdding(false);
+    setDraft("");
+    if (v) onChange(v);
+  };
+  if (adding) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") setAdding(false);
+          }}
+          onBlur={commit}
+          placeholder="שם הקולקציה"
+          className={`rounded-md border border-[var(--hob-accent)] bg-[var(--hob-surface)] px-1.5 text-[var(--hob-ink)] outline-none ${compact ? "h-7 w-28 text-[11.5px]" : "h-9 w-36 text-sm"}`}
+        />
+      </span>
+    );
+  }
   return (
     <select
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        if (e.target.value === NEW_COLLECTION) setAdding(true);
+        else onChange(e.target.value);
+      }}
       title="הקולקציה שהפריט שייך אליה"
-      className="rounded-md border border-[var(--hob-rule)] bg-[var(--hob-surface)] px-1.5 py-0.5 text-[11.5px] text-[var(--hob-soft)] hover:border-[var(--hob-faint)] focus:border-[var(--hob-accent)] focus:outline-none"
+      className={`rounded-md border border-[var(--hob-rule)] bg-[var(--hob-surface)] text-[var(--hob-soft)] hover:border-[var(--hob-faint)] focus:border-[var(--hob-accent)] focus:outline-none ${compact ? "px-1.5 py-0.5 text-[11.5px]" : "h-9 px-2 text-sm"}`}
     >
-      {COLLECTIONS.map((c) => (
-        <option key={c.key} value={c.key}>
-          {c.label}
+      {list.map((c) => (
+        <option key={c} value={c}>
+          {collectionLabel(c)}
         </option>
       ))}
+      <option value={NEW_COLLECTION}>＋ קולקציה חדשה…</option>
     </select>
   );
 }
@@ -410,7 +498,8 @@ export function PopupBadge({ rows }: { rows: SeedSale[] }) {
   );
 }
 
-// The collapsible "דרופים קודמים" divider at the bottom of the sales log.
+// The collapsible archive divider at the bottom of the sales log (imported
+// history that stays out of the current numbers).
 // Collapsed (the default) hides every archive-only buyer behind one line;
 // open shows them in the regular format. variant matches the host view.
 export function ArchiveToggle({
@@ -429,7 +518,7 @@ export function ArchiveToggle({
       <span className={`inline-block text-[10px] transition-transform ${open ? "" : "-rotate-90"}`}>
         ▾
       </span>
-      <span className="font-bold">🗂 דרופים קודמים</span>
+      <span className="font-bold">🗂 ארכיון</span>
       <span className="dm text-[var(--hob-faint)]">· {count} לקוחות</span>
       <span className="text-[11px] font-normal text-[var(--hob-faint)]">
         {open ? "לחיצה מסתירה" : "לחיצה מציגה"}
@@ -662,12 +751,16 @@ export function KindCell({
   );
 }
 
-// Location picker for logging — remembers the last choice on this device, so
-// out in the field it stays on "car" without re-picking every time.
-function lastLocation(): string {
-  if (typeof localStorage === "undefined") return "room";
-  const saved = localStorage.getItem("hob_loc");
-  return LOC_META[saved ?? ""] ? (saved as string) : "room";
+// Location picker for logging: remembers the last choice on this device, so
+// each partner's phone stays on her own shelf without re-picking every time.
+export function lastLocation(): string {
+  if (typeof localStorage === "undefined") return DEFAULT_LOCATION;
+  try {
+    const saved = localStorage.getItem("hob_loc");
+    return LOC_META[saved ?? ""] ? (saved as string) : DEFAULT_LOCATION;
+  } catch {
+    return DEFAULT_LOCATION;
+  }
 }
 
 // The manual form is for sales that did NOT come through the store (store
@@ -679,19 +772,20 @@ function lastPayMethod(): string {
   return saved !== null && PAY_METHOD[saved] ? saved : "bit";
 }
 
-function LocPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function LocPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [pos, setPos] = useState<MenuPos | null>(null);
-  const current = LOC_META[value] ?? LOC_META.room;
+  const current = locationMeta(value);
   return (
     <div className="relative h-9 w-full">
       <button
         type="button"
         onClick={(e) => setPos((p) => (p ? null : menuPosFor(e.currentTarget, LOCATIONS.length)))}
-        className="flex h-9 w-full items-center justify-center gap-1 rounded-md border border-[var(--hob-accent)] bg-[var(--hob-surface)] px-2 text-sm font-medium text-[var(--hob-accent)]"
+        className="flex h-9 w-full items-center justify-center gap-1.5 rounded-md border bg-[var(--hob-surface)] px-2 text-sm font-medium"
+        style={{ borderColor: current.color, color: current.color }}
+        title="מאיפה יורד המלאי"
       >
-        <span className="truncate">
-          {current.icon} {current.label}
-        </span>
+        <LocDot loc={value} />
+        <span className="truncate">{current.label}</span>
         <span className="text-[10px]">▾</span>
       </button>
       <Dropdown pos={pos} onClose={() => setPos(null)}>
@@ -708,11 +802,12 @@ function LocPicker({ value, onChange }: { value: string; onChange: (v: string) =
               }
               setPos(null);
             }}
-            className={`block w-full px-3 py-2 text-start text-sm hover:bg-[var(--hob-hover)] ${
-              l.key === value ? "bg-[var(--hob-hover)] font-semibold text-[var(--hob-accent)]" : "text-[var(--hob-ink)]"
+            className={`flex w-full items-center gap-2 px-3 py-2 text-start text-sm hover:bg-[var(--hob-hover)] ${
+              l.key === value ? "bg-[var(--hob-hover)] font-semibold" : "text-[var(--hob-ink)]"
             }`}
+            style={l.key === value ? { color: l.color } : undefined}
           >
-            {l.icon} {l.label}
+            <LocDot loc={l.key} /> {l.label}
           </button>
         ))}
       </Dropdown>
@@ -729,15 +824,15 @@ export function TransferInline({
   onTransfer: (to: string, size: string, qty: number) => void;
 }) {
   const targets = LOCATIONS.filter((l) => l.key !== from);
-  const [to, setTo] = useState(targets[0].key as string);
+  const [to, setTo] = useState<string>(targets[0]?.key ?? DEFAULT_LOCATION);
   const [size, setSize] = useState("");
   const [qty, setQty] = useState(1);
   const [pos, setPos] = useState<MenuPos | null>(null);
-  const toMeta = LOC_META[to] ?? LOC_META.room;
+  const toMeta = locationMeta(to);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-[12px] text-[var(--hob-soft)]">
-        העברה מ{LOC_META[from]?.label ?? from} אל
+        העברה מ{locationMeta(from).label} אל
       </span>
       <div className="relative">
         <button
@@ -745,7 +840,7 @@ export function TransferInline({
           onClick={(e) => setPos((p) => (p ? null : menuPosFor(e.currentTarget, targets.length)))}
           className="flex h-8 items-center gap-1 rounded-md border border-[var(--hob-rule-strong)] bg-[var(--hob-surface)] px-2 text-[13px] text-[var(--hob-ink)]"
         >
-          {toMeta.icon} {toMeta.label} <span className="text-[10px] text-[var(--hob-faint)]">▾</span>
+          <LocDot loc={to} /> {toMeta.label} <span className="text-[10px] text-[var(--hob-faint)]">▾</span>
         </button>
         <Dropdown pos={pos} onClose={() => setPos(null)}>
           {targets.map((l) => (
@@ -756,9 +851,9 @@ export function TransferInline({
                 setTo(l.key);
                 setPos(null);
               }}
-              className="block w-full px-3 py-2 text-start text-sm text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
+              className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
             >
-              {l.icon} {l.label}
+              <LocDot loc={l.key} /> {l.label}
             </button>
           ))}
         </Dropdown>
@@ -775,6 +870,39 @@ export function TransferInline({
         className="h-8 rounded-md bg-[var(--hob-accent)] px-3 text-[13px] font-medium text-white hover:bg-[var(--hob-accent-hover)]"
       >
         ⇄ העבר
+      </button>
+    </div>
+  );
+}
+
+// Inline receive: a shipment arrived, add qty of one size at this location.
+export function ReceiveInline({
+  at,
+  onReceive,
+}: {
+  at: string;
+  onReceive: (size: string, qty: number) => void;
+}) {
+  const [size, setSize] = useState("");
+  const [qty, setQty] = useState(1);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[12px] text-[var(--hob-soft)]">הוספה למלאי {locationMeta(at).label}</span>
+      <div className="w-20">
+        <SizePicker value={size} onChange={setSize} bordered />
+      </div>
+      <div className="rounded-md border border-[var(--hob-rule-strong)] bg-[var(--hob-surface)]">
+        <QtyStepper value={qty} onChange={(v) => setQty(Math.max(1, v))} />
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          onReceive(size, qty);
+          setQty(1);
+        }}
+        className="h-8 rounded-md bg-[var(--hob-good)] px-3 text-[13px] font-medium text-white hover:bg-[#006e40]"
+      >
+        ＋ הוסיפי
       </button>
     </div>
   );
@@ -964,21 +1092,29 @@ export function AddLineInline({
 // ---- Add-item row ----
 
 export function AddItemRow({
+  collections,
   onAdd,
 }: {
-  onAdd: (name: string, size: string, qty: number) => void;
+  collections: string[];
+  onAdd: (item: { name: string; size: string; qty: number; collection: string; price: number; unitCost: number; location: string }) => void;
 }) {
   const [name, setName] = useState("");
   const [size, setSize] = useState("");
   const [qty, setQty] = useState("");
+  const [price, setPrice] = useState("");
+  const [unitCost, setUnitCost] = useState("");
+  const [collection, setCollection] = useState(collections[0] ?? DEFAULT_COLLECTION);
+  const [location, setLocation] = useState(lastLocation);
   const submit = () => {
     const n = name.trim();
     const q = Math.max(0, Math.trunc(Number(qty) || 0));
     if (!n) return;
-    onAdd(n, size.trim(), q);
+    onAdd({ name: n, size: size.trim(), qty: q, collection, price: Math.max(0, Number(price) || 0), unitCost: Math.max(0, Number(unitCost) || 0), location });
     setName("");
     setSize("");
     setQty("");
+    setPrice("");
+    setUnitCost("");
   };
   const onKey = (e: KeyboardEvent) => e.key === "Enter" && submit();
   return (
@@ -990,8 +1126,26 @@ export function AddItemRow({
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={onKey}
-        placeholder="＋ פריט חדש (למשל: חולצת KEEP DREAMIN)"
-        className="h-8 min-w-0 flex-1 rounded-md border border-transparent px-2 text-sm outline-none placeholder:text-[var(--hob-faint)] focus:border-[var(--hob-accent)]"
+        placeholder="＋ פריט חדש (למשל: חולצה לבנה)"
+        className="h-8 min-w-0 flex-1 basis-40 rounded-md border border-transparent px-2 text-sm outline-none placeholder:text-[var(--hob-faint)] focus:border-[var(--hob-accent)]"
+      />
+      <CollectionPicker value={collection} options={collections} onChange={setCollection} compact />
+      <input
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        onKeyDown={onKey}
+        placeholder="₪ מחיר"
+        inputMode="decimal"
+        className="h-8 w-20 rounded-md border border-[var(--hob-rule)] px-2 text-center text-sm outline-none placeholder:text-[var(--hob-faint)] focus:border-[var(--hob-accent)]"
+      />
+      <input
+        value={unitCost}
+        onChange={(e) => setUnitCost(e.target.value)}
+        onKeyDown={onKey}
+        placeholder="₪ עלות"
+        inputMode="decimal"
+        title="עלות ליחידה (ייצור), לחישוב רווח"
+        className="h-8 w-20 rounded-md border border-[var(--hob-rule)] px-2 text-center text-sm outline-none placeholder:text-[var(--hob-faint)] focus:border-[var(--hob-accent)]"
       />
       <input
         value={qty}
@@ -999,9 +1153,12 @@ export function AddItemRow({
         onKeyDown={onKey}
         placeholder="כמות"
         inputMode="numeric"
-        title="נכנס לעמודת 'בלי מידה' — את הפיצול למידות ממלאים בשורת הפריט"
+        title="נכנס לעמודת 'בלי מידה' במיקום שנבחר; את הפיצול למידות ממלאים בשורת הפריט"
         className="h-8 w-20 rounded-md border border-[var(--hob-rule)] px-2 text-center text-sm outline-none placeholder:text-[var(--hob-faint)] focus:border-[var(--hob-accent)]"
       />
+      <div className="w-36">
+        <LocPicker value={location} onChange={setLocation} />
+      </div>
       {name.trim() && (
         <button
           type="button"
@@ -1172,18 +1329,22 @@ export function AddGiftForm({
   );
 }
 
-// ---- Add-sale form (manual sales until Shopify is live) ----
+// ---- Add-sale form (sales outside the store: face to face, Bit, cash) ----
 
 export function AddSaleForm({
   items,
+  actor,
   onAdd,
 }: {
   items: SeedItem[];
+  /** The logged-in partner: the default for "who handled the sale". */
+  actor: string;
   onAdd: (sale: {
     items: { itemId: number; qty: number; size: string; price: number }[];
     buyer: string;
     location: string;
     payMethod: string;
+    handledBy: string;
     soldAt: string;
   }) => void;
 }) {
@@ -1194,6 +1355,7 @@ export function AddSaleForm({
   const [size, setSize] = useState("");
   const [location, setLocation] = useState(lastLocation);
   const [payMethod, setPayMethod] = useState(lastPayMethod);
+  const [handledBy, setHandledBy] = useState(HANDLED_BY[actor] ? actor : "");
   const [price, setPrice] = useState("");
   const [soldAt, setSoldAt] = useState(todayISO());
 
@@ -1214,7 +1376,7 @@ export function AddSaleForm({
   const total = allLines.reduce((s, l) => s + l.price * l.qty, 0);
   const submit = () => {
     if (!canSubmit) return;
-    onAdd({ items: allLines, buyer: buyer.trim(), location, payMethod, soldAt });
+    onAdd({ items: allLines, buyer: buyer.trim(), location, payMethod, handledBy, soldAt });
     setLines([]);
     setBuyer("");
     setQty(1);
@@ -1231,7 +1393,7 @@ export function AddSaleForm({
         withPrice
         onRemove={(idx) => setLines((l) => l.filter((_, i) => i !== idx))}
       />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-[1.2fr_1fr_auto_auto_auto_auto_auto_auto]">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-[1.2fr_1fr_auto_auto_auto_auto_auto_auto_auto]">
         <input
           value={buyer}
           onChange={(e) => setBuyer(e.target.value)}
@@ -1288,6 +1450,9 @@ export function AddSaleForm({
               }
             }}
           />
+        </div>
+        <div className="w-28 overflow-hidden rounded-md" title="מי טיפלה במכירה">
+          <PillCell value={handledBy} vocab={HANDLED_BY} order={HANDLED_BY_ORDER} rounded onChange={setHandledBy} />
         </div>
       </div>
       <button
@@ -1468,4 +1633,4 @@ export function StatsPanel({ gifts, sales }: { gifts: SeedGift[]; sales: SeedSal
 // ---- 🎪 Pop-up mode: full-screen quick-sale for physical events ----
 // Three taps per sale (product → size → confirm); every confirm goes through
 // the SAME sale_add pipeline as the regular form, so stock, finance, the log
-// and the sale alert in Bruno's board thread all just work. No new tables, no new endpoints.
+// and the sale alert in Hobi's board thread all just work. No new tables, no new endpoints.

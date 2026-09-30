@@ -1,5 +1,5 @@
-// הקלטה קצרה ותמלול בשרת (Whisper), לשימוש חוזר מחוץ לצ'אט של ברונו. לחיצה
-// מתחילה, לחיצה שנייה עוצרת ומחזירה טקסט. עוצר לבד אחרי 90 שניות.
+// הקלטה קצרה ותמלול בשרת (Whisper דרך /api/transcribe). לחיצה מתחילה, לחיצה
+// שנייה עוצרת ומחזירה טקסט. עוצרת לבד אחרי 90 שניות.
 import { useEffect, useRef, useState } from "react";
 
 export function useRecorder(onText: (text: string) => void, onError: (message: string) => void) {
@@ -25,7 +25,7 @@ export function useRecorder(onText: (text: string) => void, onError: (message: s
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      onError("אין גישה למיקרופון. אשר אותה בהגדרות הדפדפן.");
+      onError("אין גישה למיקרופון. אשרו אותה בהגדרות הדפדפן.");
       return;
     }
     const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
@@ -43,12 +43,16 @@ export function useRecorder(onText: (text: string) => void, onError: (message: s
       setBusy(true);
       try {
         const res = await fetch("/api/transcribe", { method: "POST", headers: { "content-type": blob.type }, body: blob });
+        if (res.status === 401) {
+          onError("unauthorized");
+          return;
+        }
         const data = (await res.json().catch(() => null)) as { text?: string } | null;
         const text = (data?.text ?? "").trim();
-        if (!res.ok || !text) onError("לא הצלחתי להבין את ההקלטה. נסה שוב, קרוב יותר למיקרופון.");
+        if (!res.ok || !text) onError("לא הצלחתי להבין את ההקלטה. נסו שוב, קרוב יותר למיקרופון.");
         else onText(text);
       } catch {
-        onError("התמלול נכשל. בדוק חיבור ונסה שוב.");
+        onError("התמלול נכשל. בדקו חיבור ונסו שוב.");
       } finally {
         setBusy(false);
       }

@@ -1,8 +1,6 @@
-// שילוב הנחות לקודי משפיענים (24.9.2026): שופיפיי מצרפת שתי הנחות רק אם שתיהן
-// מרשות זו את זו. קודים שנוצרו לפני התאריך הזה נולדו בלי הרשאה בכלל, ולכן
-// בעגלה עם סט DREAMER הם ביטלו את ההנחה האוטומטית במקום להצטרף אליה. כאן
-// נבדק התיקון: הוא רץ פעם אחת לכל קוד, מסמן רק כשהחנות אישרה, וקוד חדש נולד
-// מתוקן ולכן לא מציג את כפתור התיקון בטאב.
+// קודי משפיענים מול החנות (דרך ה-DO): יצירת קוד, שילוב עם ההנחות האוטומטיות
+// של החנות (תיקון חד-פעמי לקודים ישנים, מסומן רק כשהחנות אישרה), וסגירה של
+// שיתוף פעולה (הקוד מפסיק לעבוד אבל לא נמחק). האחוזים מגיעים מ-settings.
 import { beforeEach, expect, test } from "vitest";
 import { freshDb } from "./d1";
 import { env } from "./cf-workers-stub";
@@ -96,7 +94,7 @@ test("תיקון של משפיענית אחת לא נוגע באחרות", async
   expect(await combinesOk(noa)).toBe(0);
 });
 
-test("קוד חדש נולד משולב, בלי כפתור תיקון", async () => {
+test("קוד חדש נולד משולב, עם אחוז ההנחה מההגדרות", async () => {
   const id = Number(
     (
       await db
@@ -108,16 +106,32 @@ test("קוד חדש נולד משולב, בלי כפתור תיקון", async ()
 
   const res = await ensureDiscountCode(id);
   expect(res).toEqual({ ok: true, code: "DANA10" });
-  expect(calls[0].path).toBe("/collab-discount");
+  expect(calls[0]).toEqual({ path: "/collab-discount", body: { code: "DANA10", pct: 0.1 } });
   expect(await combinesOk(id)).toBe(1);
 
   // אין מה לתקן: הקוד כבר נולד עם שילוב הנחות.
   expect((await fixCodeCombinations()).fixed).toBe(0);
 });
 
-// ---- סיום שיתוף פעולה (24.9) ----
-// אין תפוגה אוטומטית (החלטת יוגב); הסגירה יזומה מהטאב. הקוד לא נמחק: מה
-// שנצבר נשאר, והלינק הישן בסטורי מוביל לחנות רגילה במקום להנחה מתה.
+test("שינוי אחוז ההנחה בהגדרות משנה את הסיומת של הקוד", async () => {
+  await db.prepare("UPDATE settings SET value = '15' WHERE key = 'collab_discount_pct'").run();
+  const id = Number(
+    (
+      await db
+        .prepare("INSERT INTO collab_links (token, campaign_id, name, instagram) VALUES ('t-heb', 1, 'נועה לוי', '')")
+        .run()
+    ).meta.last_row_id,
+  );
+  const calls = fakeAgent(() => ({ ok: true }));
+  const res = await ensureDiscountCode(id);
+  // בלי אינסטגרם: תעתיק של השם הפרטי.
+  expect(res).toEqual({ ok: true, code: "NOA15" });
+  expect(calls[0].body.pct).toBeCloseTo(0.15);
+});
+
+// ---- סיום שיתוף פעולה ----
+// אין תפוגה אוטומטית; הסגירה יזומה מהטאב. הקוד לא נמחק: מה שנצבר נשאר,
+// והלינק הישן בסטורי מוביל לחנות רגילה במקום להנחה מתה.
 
 const endedAt = async (id: number): Promise<string> =>
   (await db.prepare("SELECT code_ended_at FROM collab_links WHERE id = ?").bind(id).first<{ code_ended_at: string }>())
@@ -128,9 +142,7 @@ test("סגירת קוד מכבה אותו בחנות ומנטרלת את לינ�
   const calls = fakeAgent(() => ({ ok: true }));
 
   expect(await setCodeActive(id, false)).toEqual({ ok: true });
-  expect(calls).toEqual([
-    { path: "/collab-discount-active", body: { code: "KRN10", active: false } },
-  ]);
+  expect(calls).toEqual([{ path: "/collab-discount-active", body: { code: "KRN10", active: false } }]);
   expect(await endedAt(id)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
   // הקליק לא נספר יותר, כי הוא כבר לא יכול להפוך למכירה.

@@ -12,36 +12,22 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
-import { Route as ApiBizdevRouteImport } from './routes/api/bizdev'
 import { Route as ApiBoardRouteImport } from './routes/api/board'
-import { Route as ApiCampaignRouteImport } from './routes/api/campaign'
 import { Route as ApiCollabRouteImport } from './routes/api/collab'
-import { Route as ApiDeliveryRouteImport } from './routes/api/delivery'
 import { Route as ApiFinanceRouteImport } from './routes/api/finance'
 import { Route as ApiLoginRouteImport } from './routes/api/login'
 import { Route as ApiLogoutRouteImport } from './routes/api/logout'
 import { Route as ApiMeRouteImport } from './routes/api/me'
-import { Route as ApiPlanRouteImport } from './routes/api/plan'
 import { Route as ApiPushRouteImport } from './routes/api/push'
 import { Route as ApiReceiptRouteImport } from './routes/api/receipt'
 import { Route as ApiSeedingRouteImport } from './routes/api/seeding'
+import { Route as ApiSettingsRouteImport } from './routes/api/settings'
 import { Route as ApiShopifyWebhookRouteImport } from './routes/api/shopify-webhook'
-import { Route as ApiStudioRouteImport } from './routes/api/studio'
-import { Route as ApiStudioImageRouteImport } from './routes/api/studio-image'
-import { Route as ApiTeamRouteImport } from './routes/api/team'
-import { Route as ApiTeamAvatarRouteImport } from './routes/api/team-avatar'
 import { Route as ApiTodayRouteImport } from './routes/api/today'
 import { Route as ApiTranscribeRouteImport } from './routes/api/transcribe'
-import { Route as BTokenRouteImport } from './routes/b.$token'
 import { Route as CTokenRouteImport } from './routes/c.$token'
-import { Route as DTokenRouteImport } from './routes/d.$token'
-import { Route as KTokenRouteImport } from './routes/k.$token'
-import { Route as KiKeyRouteImport } from './routes/ki.$key'
-import { Route as MediaFileRouteImport } from './routes/media.$file'
 import { Route as MyTokenRouteImport } from './routes/my.$token'
-import { Route as PTokenRouteImport } from './routes/p.$token'
 import { Route as SCodeRouteImport } from './routes/s.$code'
-import { Route as ShotKeyRouteImport } from './routes/shot.$key'
 import { Route as ApiAgentRunRouteImport } from './routes/api/agent/run'
 import { Route as ApiAgentStatusRouteImport } from './routes/api/agent/status'
 import { Route as ApiAssistantChatRouteImport } from './routes/api/assistant/chat'
@@ -64,29 +50,14 @@ const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   path: '/sitemap.xml',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiBizdevRoute = ApiBizdevRouteImport.update({
-  id: '/api/bizdev',
-  path: '/api/bizdev',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiBoardRoute = ApiBoardRouteImport.update({
   id: '/api/board',
   path: '/api/board',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiCampaignRoute = ApiCampaignRouteImport.update({
-  id: '/api/campaign',
-  path: '/api/campaign',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiCollabRoute = ApiCollabRouteImport.update({
   id: '/api/collab',
   path: '/api/collab',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiDeliveryRoute = ApiDeliveryRouteImport.update({
-  id: '/api/delivery',
-  path: '/api/delivery',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiFinanceRoute = ApiFinanceRouteImport.update({
@@ -109,11 +80,6 @@ const ApiMeRoute = ApiMeRouteImport.update({
   path: '/api/me',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPlanRoute = ApiPlanRouteImport.update({
-  id: '/api/plan',
-  path: '/api/plan',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiPushRoute = ApiPushRouteImport.update({
   id: '/api/push',
   path: '/api/push',
@@ -129,29 +95,14 @@ const ApiSeedingRoute = ApiSeedingRouteImport.update({
   path: '/api/seeding',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiSettingsRoute = ApiSettingsRouteImport.update({
+  id: '/api/settings',
+  path: '/api/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiShopifyWebhookRoute = ApiShopifyWebhookRouteImport.update({
   id: '/api/shopify-webhook',
   path: '/api/shopify-webhook',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiStudioRoute = ApiStudioRouteImport.update({
-  id: '/api/studio',
-  path: '/api/studio',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiStudioImageRoute = ApiStudioImageRouteImport.update({
-  id: '/api/studio-image',
-  path: '/api/studio-image',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamRoute = ApiTeamRouteImport.update({
-  id: '/api/team',
-  path: '/api/team',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamAvatarRoute = ApiTeamAvatarRouteImport.update({
-  id: '/api/team-avatar',
-  path: '/api/team-avatar',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiTodayRoute = ApiTodayRouteImport.update({
@@ -164,34 +115,9 @@ const ApiTranscribeRoute = ApiTranscribeRouteImport.update({
   path: '/api/transcribe',
   getParentRoute: () => rootRouteImport,
 } as any)
-const BTokenRoute = BTokenRouteImport.update({
-  id: '/b/$token',
-  path: '/b/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const CTokenRoute = CTokenRouteImport.update({
   id: '/c/$token',
   path: '/c/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DTokenRoute = DTokenRouteImport.update({
-  id: '/d/$token',
-  path: '/d/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const KTokenRoute = KTokenRouteImport.update({
-  id: '/k/$token',
-  path: '/k/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const KiKeyRoute = KiKeyRouteImport.update({
-  id: '/ki/$key',
-  path: '/ki/$key',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MediaFileRoute = MediaFileRouteImport.update({
-  id: '/media/$file',
-  path: '/media/$file',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MyTokenRoute = MyTokenRouteImport.update({
@@ -199,19 +125,9 @@ const MyTokenRoute = MyTokenRouteImport.update({
   path: '/my/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PTokenRoute = PTokenRouteImport.update({
-  id: '/p/$token',
-  path: '/p/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SCodeRoute = SCodeRouteImport.update({
   id: '/s/$code',
   path: '/s/$code',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ShotKeyRoute = ShotKeyRouteImport.update({
-  id: '/shot/$key',
-  path: '/shot/$key',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAgentRunRoute = ApiAgentRunRouteImport.update({
@@ -249,36 +165,22 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
-  '/api/bizdev': typeof ApiBizdevRoute
   '/api/board': typeof ApiBoardRoute
-  '/api/campaign': typeof ApiCampaignRoute
   '/api/collab': typeof ApiCollabRoute
-  '/api/delivery': typeof ApiDeliveryRoute
   '/api/finance': typeof ApiFinanceRoute
   '/api/login': typeof ApiLoginRoute
   '/api/logout': typeof ApiLogoutRoute
   '/api/me': typeof ApiMeRoute
-  '/api/plan': typeof ApiPlanRoute
   '/api/push': typeof ApiPushRoute
   '/api/receipt': typeof ApiReceiptRoute
   '/api/seeding': typeof ApiSeedingRoute
+  '/api/settings': typeof ApiSettingsRoute
   '/api/shopify-webhook': typeof ApiShopifyWebhookRoute
-  '/api/studio': typeof ApiStudioRoute
-  '/api/studio-image': typeof ApiStudioImageRoute
-  '/api/team': typeof ApiTeamRoute
-  '/api/team-avatar': typeof ApiTeamAvatarRoute
   '/api/today': typeof ApiTodayRoute
   '/api/transcribe': typeof ApiTranscribeRoute
-  '/b/$token': typeof BTokenRoute
   '/c/$token': typeof CTokenRoute
-  '/d/$token': typeof DTokenRoute
-  '/k/$token': typeof KTokenRoute
-  '/ki/$key': typeof KiKeyRoute
-  '/media/$file': typeof MediaFileRoute
   '/my/$token': typeof MyTokenRoute
-  '/p/$token': typeof PTokenRoute
   '/s/$code': typeof SCodeRoute
-  '/shot/$key': typeof ShotKeyRoute
   '/api/agent/run': typeof ApiAgentRunRoute
   '/api/agent/status': typeof ApiAgentStatusRoute
   '/api/assistant/chat': typeof ApiAssistantChatRoute
@@ -290,36 +192,22 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
-  '/api/bizdev': typeof ApiBizdevRoute
   '/api/board': typeof ApiBoardRoute
-  '/api/campaign': typeof ApiCampaignRoute
   '/api/collab': typeof ApiCollabRoute
-  '/api/delivery': typeof ApiDeliveryRoute
   '/api/finance': typeof ApiFinanceRoute
   '/api/login': typeof ApiLoginRoute
   '/api/logout': typeof ApiLogoutRoute
   '/api/me': typeof ApiMeRoute
-  '/api/plan': typeof ApiPlanRoute
   '/api/push': typeof ApiPushRoute
   '/api/receipt': typeof ApiReceiptRoute
   '/api/seeding': typeof ApiSeedingRoute
+  '/api/settings': typeof ApiSettingsRoute
   '/api/shopify-webhook': typeof ApiShopifyWebhookRoute
-  '/api/studio': typeof ApiStudioRoute
-  '/api/studio-image': typeof ApiStudioImageRoute
-  '/api/team': typeof ApiTeamRoute
-  '/api/team-avatar': typeof ApiTeamAvatarRoute
   '/api/today': typeof ApiTodayRoute
   '/api/transcribe': typeof ApiTranscribeRoute
-  '/b/$token': typeof BTokenRoute
   '/c/$token': typeof CTokenRoute
-  '/d/$token': typeof DTokenRoute
-  '/k/$token': typeof KTokenRoute
-  '/ki/$key': typeof KiKeyRoute
-  '/media/$file': typeof MediaFileRoute
   '/my/$token': typeof MyTokenRoute
-  '/p/$token': typeof PTokenRoute
   '/s/$code': typeof SCodeRoute
-  '/shot/$key': typeof ShotKeyRoute
   '/api/agent/run': typeof ApiAgentRunRoute
   '/api/agent/status': typeof ApiAgentStatusRoute
   '/api/assistant/chat': typeof ApiAssistantChatRoute
@@ -332,36 +220,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
-  '/api/bizdev': typeof ApiBizdevRoute
   '/api/board': typeof ApiBoardRoute
-  '/api/campaign': typeof ApiCampaignRoute
   '/api/collab': typeof ApiCollabRoute
-  '/api/delivery': typeof ApiDeliveryRoute
   '/api/finance': typeof ApiFinanceRoute
   '/api/login': typeof ApiLoginRoute
   '/api/logout': typeof ApiLogoutRoute
   '/api/me': typeof ApiMeRoute
-  '/api/plan': typeof ApiPlanRoute
   '/api/push': typeof ApiPushRoute
   '/api/receipt': typeof ApiReceiptRoute
   '/api/seeding': typeof ApiSeedingRoute
+  '/api/settings': typeof ApiSettingsRoute
   '/api/shopify-webhook': typeof ApiShopifyWebhookRoute
-  '/api/studio': typeof ApiStudioRoute
-  '/api/studio-image': typeof ApiStudioImageRoute
-  '/api/team': typeof ApiTeamRoute
-  '/api/team-avatar': typeof ApiTeamAvatarRoute
   '/api/today': typeof ApiTodayRoute
   '/api/transcribe': typeof ApiTranscribeRoute
-  '/b/$token': typeof BTokenRoute
   '/c/$token': typeof CTokenRoute
-  '/d/$token': typeof DTokenRoute
-  '/k/$token': typeof KTokenRoute
-  '/ki/$key': typeof KiKeyRoute
-  '/media/$file': typeof MediaFileRoute
   '/my/$token': typeof MyTokenRoute
-  '/p/$token': typeof PTokenRoute
   '/s/$code': typeof SCodeRoute
-  '/shot/$key': typeof ShotKeyRoute
   '/api/agent/run': typeof ApiAgentRunRoute
   '/api/agent/status': typeof ApiAgentStatusRoute
   '/api/assistant/chat': typeof ApiAssistantChatRoute
@@ -375,36 +249,22 @@ export interface FileRouteTypes {
     | '/'
     | '/robots.txt'
     | '/sitemap.xml'
-    | '/api/bizdev'
     | '/api/board'
-    | '/api/campaign'
     | '/api/collab'
-    | '/api/delivery'
     | '/api/finance'
     | '/api/login'
     | '/api/logout'
     | '/api/me'
-    | '/api/plan'
     | '/api/push'
     | '/api/receipt'
     | '/api/seeding'
+    | '/api/settings'
     | '/api/shopify-webhook'
-    | '/api/studio'
-    | '/api/studio-image'
-    | '/api/team'
-    | '/api/team-avatar'
     | '/api/today'
     | '/api/transcribe'
-    | '/b/$token'
     | '/c/$token'
-    | '/d/$token'
-    | '/k/$token'
-    | '/ki/$key'
-    | '/media/$file'
     | '/my/$token'
-    | '/p/$token'
     | '/s/$code'
-    | '/shot/$key'
     | '/api/agent/run'
     | '/api/agent/status'
     | '/api/assistant/chat'
@@ -416,36 +276,22 @@ export interface FileRouteTypes {
     | '/'
     | '/robots.txt'
     | '/sitemap.xml'
-    | '/api/bizdev'
     | '/api/board'
-    | '/api/campaign'
     | '/api/collab'
-    | '/api/delivery'
     | '/api/finance'
     | '/api/login'
     | '/api/logout'
     | '/api/me'
-    | '/api/plan'
     | '/api/push'
     | '/api/receipt'
     | '/api/seeding'
+    | '/api/settings'
     | '/api/shopify-webhook'
-    | '/api/studio'
-    | '/api/studio-image'
-    | '/api/team'
-    | '/api/team-avatar'
     | '/api/today'
     | '/api/transcribe'
-    | '/b/$token'
     | '/c/$token'
-    | '/d/$token'
-    | '/k/$token'
-    | '/ki/$key'
-    | '/media/$file'
     | '/my/$token'
-    | '/p/$token'
     | '/s/$code'
-    | '/shot/$key'
     | '/api/agent/run'
     | '/api/agent/status'
     | '/api/assistant/chat'
@@ -457,36 +303,22 @@ export interface FileRouteTypes {
     | '/'
     | '/robots.txt'
     | '/sitemap.xml'
-    | '/api/bizdev'
     | '/api/board'
-    | '/api/campaign'
     | '/api/collab'
-    | '/api/delivery'
     | '/api/finance'
     | '/api/login'
     | '/api/logout'
     | '/api/me'
-    | '/api/plan'
     | '/api/push'
     | '/api/receipt'
     | '/api/seeding'
+    | '/api/settings'
     | '/api/shopify-webhook'
-    | '/api/studio'
-    | '/api/studio-image'
-    | '/api/team'
-    | '/api/team-avatar'
     | '/api/today'
     | '/api/transcribe'
-    | '/b/$token'
     | '/c/$token'
-    | '/d/$token'
-    | '/k/$token'
-    | '/ki/$key'
-    | '/media/$file'
     | '/my/$token'
-    | '/p/$token'
     | '/s/$code'
-    | '/shot/$key'
     | '/api/agent/run'
     | '/api/agent/status'
     | '/api/assistant/chat'
@@ -499,36 +331,22 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
-  ApiBizdevRoute: typeof ApiBizdevRoute
   ApiBoardRoute: typeof ApiBoardRoute
-  ApiCampaignRoute: typeof ApiCampaignRoute
   ApiCollabRoute: typeof ApiCollabRoute
-  ApiDeliveryRoute: typeof ApiDeliveryRoute
   ApiFinanceRoute: typeof ApiFinanceRoute
   ApiLoginRoute: typeof ApiLoginRoute
   ApiLogoutRoute: typeof ApiLogoutRoute
   ApiMeRoute: typeof ApiMeRoute
-  ApiPlanRoute: typeof ApiPlanRoute
   ApiPushRoute: typeof ApiPushRoute
   ApiReceiptRoute: typeof ApiReceiptRoute
   ApiSeedingRoute: typeof ApiSeedingRoute
+  ApiSettingsRoute: typeof ApiSettingsRoute
   ApiShopifyWebhookRoute: typeof ApiShopifyWebhookRoute
-  ApiStudioRoute: typeof ApiStudioRoute
-  ApiStudioImageRoute: typeof ApiStudioImageRoute
-  ApiTeamRoute: typeof ApiTeamRoute
-  ApiTeamAvatarRoute: typeof ApiTeamAvatarRoute
   ApiTodayRoute: typeof ApiTodayRoute
   ApiTranscribeRoute: typeof ApiTranscribeRoute
-  BTokenRoute: typeof BTokenRoute
   CTokenRoute: typeof CTokenRoute
-  DTokenRoute: typeof DTokenRoute
-  KTokenRoute: typeof KTokenRoute
-  KiKeyRoute: typeof KiKeyRoute
-  MediaFileRoute: typeof MediaFileRoute
   MyTokenRoute: typeof MyTokenRoute
-  PTokenRoute: typeof PTokenRoute
   SCodeRoute: typeof SCodeRoute
-  ShotKeyRoute: typeof ShotKeyRoute
   ApiAgentRunRoute: typeof ApiAgentRunRoute
   ApiAgentStatusRoute: typeof ApiAgentStatusRoute
   ApiAssistantChatRoute: typeof ApiAssistantChatRoute
@@ -560,13 +378,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SitemapDotxmlRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/bizdev': {
-      id: '/api/bizdev'
-      path: '/api/bizdev'
-      fullPath: '/api/bizdev'
-      preLoaderRoute: typeof ApiBizdevRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/board': {
       id: '/api/board'
       path: '/api/board'
@@ -574,25 +385,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiBoardRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/campaign': {
-      id: '/api/campaign'
-      path: '/api/campaign'
-      fullPath: '/api/campaign'
-      preLoaderRoute: typeof ApiCampaignRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/collab': {
       id: '/api/collab'
       path: '/api/collab'
       fullPath: '/api/collab'
       preLoaderRoute: typeof ApiCollabRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/delivery': {
-      id: '/api/delivery'
-      path: '/api/delivery'
-      fullPath: '/api/delivery'
-      preLoaderRoute: typeof ApiDeliveryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/finance': {
@@ -623,13 +420,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/plan': {
-      id: '/api/plan'
-      path: '/api/plan'
-      fullPath: '/api/plan'
-      preLoaderRoute: typeof ApiPlanRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/push': {
       id: '/api/push'
       path: '/api/push'
@@ -651,39 +441,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSeedingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/settings': {
+      id: '/api/settings'
+      path: '/api/settings'
+      fullPath: '/api/settings'
+      preLoaderRoute: typeof ApiSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/shopify-webhook': {
       id: '/api/shopify-webhook'
       path: '/api/shopify-webhook'
       fullPath: '/api/shopify-webhook'
       preLoaderRoute: typeof ApiShopifyWebhookRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/studio': {
-      id: '/api/studio'
-      path: '/api/studio'
-      fullPath: '/api/studio'
-      preLoaderRoute: typeof ApiStudioRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/studio-image': {
-      id: '/api/studio-image'
-      path: '/api/studio-image'
-      fullPath: '/api/studio-image'
-      preLoaderRoute: typeof ApiStudioImageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/team': {
-      id: '/api/team'
-      path: '/api/team'
-      fullPath: '/api/team'
-      preLoaderRoute: typeof ApiTeamRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/team-avatar': {
-      id: '/api/team-avatar'
-      path: '/api/team-avatar'
-      fullPath: '/api/team-avatar'
-      preLoaderRoute: typeof ApiTeamAvatarRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/today': {
@@ -700,46 +469,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTranscribeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/b/$token': {
-      id: '/b/$token'
-      path: '/b/$token'
-      fullPath: '/b/$token'
-      preLoaderRoute: typeof BTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/c/$token': {
       id: '/c/$token'
       path: '/c/$token'
       fullPath: '/c/$token'
       preLoaderRoute: typeof CTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/d/$token': {
-      id: '/d/$token'
-      path: '/d/$token'
-      fullPath: '/d/$token'
-      preLoaderRoute: typeof DTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/k/$token': {
-      id: '/k/$token'
-      path: '/k/$token'
-      fullPath: '/k/$token'
-      preLoaderRoute: typeof KTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ki/$key': {
-      id: '/ki/$key'
-      path: '/ki/$key'
-      fullPath: '/ki/$key'
-      preLoaderRoute: typeof KiKeyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/media/$file': {
-      id: '/media/$file'
-      path: '/media/$file'
-      fullPath: '/media/$file'
-      preLoaderRoute: typeof MediaFileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/my/$token': {
@@ -749,25 +483,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MyTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/p/$token': {
-      id: '/p/$token'
-      path: '/p/$token'
-      fullPath: '/p/$token'
-      preLoaderRoute: typeof PTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/s/$code': {
       id: '/s/$code'
       path: '/s/$code'
       fullPath: '/s/$code'
       preLoaderRoute: typeof SCodeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/shot/$key': {
-      id: '/shot/$key'
-      path: '/shot/$key'
-      fullPath: '/shot/$key'
-      preLoaderRoute: typeof ShotKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/agent/run': {
@@ -819,36 +539,22 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
-  ApiBizdevRoute: ApiBizdevRoute,
   ApiBoardRoute: ApiBoardRoute,
-  ApiCampaignRoute: ApiCampaignRoute,
   ApiCollabRoute: ApiCollabRoute,
-  ApiDeliveryRoute: ApiDeliveryRoute,
   ApiFinanceRoute: ApiFinanceRoute,
   ApiLoginRoute: ApiLoginRoute,
   ApiLogoutRoute: ApiLogoutRoute,
   ApiMeRoute: ApiMeRoute,
-  ApiPlanRoute: ApiPlanRoute,
   ApiPushRoute: ApiPushRoute,
   ApiReceiptRoute: ApiReceiptRoute,
   ApiSeedingRoute: ApiSeedingRoute,
+  ApiSettingsRoute: ApiSettingsRoute,
   ApiShopifyWebhookRoute: ApiShopifyWebhookRoute,
-  ApiStudioRoute: ApiStudioRoute,
-  ApiStudioImageRoute: ApiStudioImageRoute,
-  ApiTeamRoute: ApiTeamRoute,
-  ApiTeamAvatarRoute: ApiTeamAvatarRoute,
   ApiTodayRoute: ApiTodayRoute,
   ApiTranscribeRoute: ApiTranscribeRoute,
-  BTokenRoute: BTokenRoute,
   CTokenRoute: CTokenRoute,
-  DTokenRoute: DTokenRoute,
-  KTokenRoute: KTokenRoute,
-  KiKeyRoute: KiKeyRoute,
-  MediaFileRoute: MediaFileRoute,
   MyTokenRoute: MyTokenRoute,
-  PTokenRoute: PTokenRoute,
   SCodeRoute: SCodeRoute,
-  ShotKeyRoute: ShotKeyRoute,
   ApiAgentRunRoute: ApiAgentRunRoute,
   ApiAgentStatusRoute: ApiAgentStatusRoute,
   ApiAssistantChatRoute: ApiAssistantChatRoute,

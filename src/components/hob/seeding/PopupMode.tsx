@@ -16,21 +16,21 @@ import {
   type MenuPos,
 } from "../board";
 // Shekel amounts. In demo mode (🥷) body.hob-demo CSS smears every .dm span.
-import { BUCKETS, ILS, LOCATIONS, SeedItem, SeedSale, Shs, itemLabel, stockAt } from "./shared";
+import { BUCKETS, DEFAULT_LOCATION, ILS, LOCATIONS, LocDot, SeedItem, SeedSale, Shs, itemLabel, lastLocation, locationMeta, stockAt } from "./shared";
 
 export const POPUP_BUYER = "פופ-אפ";
 // Bucket column → the size string a sale line records ("" = no size).
 const BUCKET_SIZE: Record<string, string> = {
   qty: "", qty_xs: "XS", qty_s: "S", qty_m: "M", qty_l: "L", qty_xl: "XL", qty_xxl: "XXL",
 };
-// Payment options offered at the stand. Hyp is the card terminal, so it
-// leads; the short labels keep the confirm button readable.
+// Payment options offered at the stand. Bit leads (most common face to
+// face); the short labels keep the confirm button readable.
 const POPUP_PAY: [string, string][] = [
-  ["hyp", "💳 Hyp"],
   ["bit", "📱 ביט"],
   ["cash", "💵 מזומן"],
+  ["transfer", "🏦 העברה"],
 ];
-const POPUP_PAY_SHORT: Record<string, string> = { hyp: "Hyp", bit: "ביט", cash: "מזומן" };
+const POPUP_PAY_SHORT: Record<string, string> = { bit: "ביט", cash: "מזומן", transfer: "העברה", shopify: "שופיפיי" };
 
 // The last nav-button popup signal already acted on (see the effect in
 // SeedingView). Module scope on purpose — it must survive tab switches.
@@ -48,17 +48,29 @@ export function PopupMode({
   pending: boolean;
   onClose: () => void;
 }) {
+  // Which partner's stock the stand sells from: last choice on this device,
+  // else the same default as the regular forms.
   const [loc, setLoc] = useState<string>(() => {
-    try { return localStorage.getItem("hob_popup_loc") || "car"; } catch { return "car"; }
+    try {
+      const saved = localStorage.getItem("hob_popup_loc");
+      return saved && locationMeta(saved).icon !== "?" ? saved : lastLocation();
+    } catch {
+      return DEFAULT_LOCATION;
+    }
   });
   const [pay, setPay] = useState<string>(() => {
-    try { return localStorage.getItem("hob_popup_pay") || "hyp"; } catch { return "hyp"; }
+    try {
+      const saved = localStorage.getItem("hob_popup_pay");
+      return saved && POPUP_PAY.some(([k]) => k === saved) ? saved : "bit";
+    } catch {
+      return "bit";
+    }
   });
   const [selItemId, setSelItemId] = useState<number | null>(null);
   // null = not picked yet; "" = explicitly "no size". A real pick is required
   // so a rushed double-tap can't record the wrong bucket.
   const [selSize, setSelSize] = useState<string | null>(null);
-  // Optional customer details — the data the partners keep for future drops.
+  // Optional customer details: the data the partners keep for next time.
   // Left empty, the sale records under the anonymous pop-up sentinel.
   const [buyerName, setBuyerName] = useState("");
   const [buyerPhone, setBuyerPhone] = useState("");
@@ -93,7 +105,7 @@ export function PopupMode({
   // Cash-box math: revenue per payment method, so counting the box at close
   // has a number to match against.
   const dayByPay = todayRows.reduce<Record<string, number>>((acc, r) => {
-    const k = r.pay_method || "hyp";
+    const k = r.pay_method || "bit";
     acc[k] = (acc[k] ?? 0) + r.price * r.qty;
     return acc;
   }, {});
@@ -212,12 +224,12 @@ export function PopupMode({
                 key={l.key}
                 type="button"
                 onClick={() => pickLoc(l.key)}
-                className={`rounded-full px-2.5 py-1 text-[11px] ${
+                className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] ${
                   loc === l.key ? "bg-white font-bold text-[#14142b]" : "bg-white/15"
                 }`}
                 title={`המלאי יירד מ: ${l.label}`}
               >
-                {l.icon} {l.label}
+                <LocDot loc={l.key} /> {l.label}
               </button>
             ))}
           </div>
@@ -442,13 +454,13 @@ export function PopupMode({
             )}
             {!(effPrice > 0) && (
               <p className="mt-1.5 text-[11.5px] text-[#e2445c]">
-                לפריט הזה אין מחיר — הקלידו סכום בתיבת המחיר, או קבעו מחיר קבוע בעמודת ₪ מחיר בטאב חלוקות.
+                לפריט הזה אין מחיר — הקלידו סכום בתיבת המחיר, או קבעו מחיר קבוע בעמודת ₪ מחיר בטאב מלאי.
               </p>
             )}
 
             {/* 4 · customer — optional, this is the data for the next drop */}
             <div className="mb-1 mt-4 text-[11px] font-bold text-[var(--hob-faint)]">
-              4 · מי הקונה? <span className="font-normal">(לא חובה — דאטה לדרופ הבא)</span>
+              4 · מי הקונה? <span className="font-normal">(לא חובה — דאטה לפעם הבאה)</span>
             </div>
             <div className="flex gap-2">
               <input

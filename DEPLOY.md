@@ -27,6 +27,7 @@ npx wrangler secret put ANTHROPIC_API_KEY
 # 5. שופיפיי (אופציונלי בהתחלה, ראו SHOPIFY.md)
 npx wrangler secret put SHOPIFY_CLIENT_ID
 npx wrangler secret put SHOPIFY_CLIENT_SECRET
+npx wrangler secret put SHOPIFY_WEBHOOK_SECRET   # החתימה של ה-webhook (ראו SHOPIFY.md)
 
 # 6. העלאה
 npm run deploy
@@ -62,3 +63,24 @@ npm run db:seed:local   # כמה משימות ומוצרים לדוגמה, בל�
 npm run dev             # http://localhost:3000
 ```
 **לא מריצים את הדמו על --remote**: הוא מוחק את כל הנתונים.
+
+## העברה לחשבון Cloudflare של השותפות (כשמגיע הזמן)
+הלוח יכול לעלות קודם בחשבון של יוגב ולעבור אחר כך לחשבון של אביה וליאור בלי לאבד נתונים. כשעה עבודה.
+
+1. **חשבון חדש:** אחת מהן פותחת חשבון ב-https://dash.cloudflare.com/sign-up ומוסיפה את יוגב כחבר: Manage Account → Members → Invite (תפקיד Administrator). ככה יוגב מריץ את ההעברה, והחשבון נשאר שלהן.
+2. **גיבוי מהחשבון הישן** (במחשב של יוגב, בתוך תיקיית הפרויקט, מחובר לחשבון הישן):
+   ```bash
+   npx wrangler d1 export hob-crm-db --remote --output=hob-data.sql --no-schema
+   ```
+   קבלות ותמונות מ-R2: להוריד את דלי `hob-crm-files` (Cloudflare → R2 → הדלי → Download, או `npx wrangler r2 object get` לכל קובץ). לגרסה הראשונה זה בדרך כלל כמה עשרות קבצים.
+3. **הקמה בחשבון החדש:** `npx wrangler logout && npx wrangler login` (לבחור את החשבון של hob), ואז שלבים 1 עד 6 מ"הכנה חד-פעמית" למעלה. ה-database_id החדש נכנס ל-`wrangler.jsonc`.
+4. **טעינת הנתונים:**
+   ```bash
+   npx wrangler d1 execute hob-crm-db --remote --file=hob-data.sql
+   ```
+   ואת הקבצים מעלים לדלי החדש באותו נתיב (`receipts/...`, `backups/...`).
+5. **סודות מחדש:** ANTHROPIC_API_KEY, SHOPIFY_*, VAPID (אפשר לייצר זוג חדש; אז ההתראות בטלפון מופעלות מחדש מההגדרות).
+6. **שופיפיי:** לעדכן את כתובת ה-webhook לכתובת החדשה של ה-Worker (SHOPIFY.md, שלב ה-webhook).
+7. **דומיין:** אם היה דומיין מותאם, מחברים אותו ל-Worker החדש ומנתקים מהישן. אחרי שהכל עובד: `npx wrangler delete` בחשבון הישן.
+
+המשתמשות והסיסמאות עוברות עם הנתונים (טבלת users), אין צורך ליצור מחדש.

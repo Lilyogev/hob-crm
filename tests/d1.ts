@@ -3,8 +3,13 @@
 // so Promise.all really interleaves statements the way concurrent requests do.
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { env } from "./cf-workers-stub";
+
+// Every file in /migrations, applied in name order (0001_core.sql first, then
+// each module's own additive file), so a test sees the same schema as D1.
+const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
@@ -51,10 +56,9 @@ class Stmt {
 
 export function freshDb() {
   const db = new DatabaseSync(":memory:");
-  const dir = join(__dirname, "..", "migrations");
-  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql")).sort()) {
+  for (const f of readdirSync(MIGRATIONS_DIR).filter((x) => x.endsWith(".sql")).sort()) {
     try {
-      db.exec(readFileSync(join(dir, f), "utf8"));
+      db.exec(readFileSync(join(MIGRATIONS_DIR, f), "utf8"));
     } catch (error) {
       throw new Error(`migration ${f}: ${String(error)}`);
     }

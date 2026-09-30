@@ -1,16 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import { PARTNER, PARTNERS, isPartner } from "../../lib/partners";
 import { DeleteButton, EditableText, api, parseMoney, post } from "./board";
 import { nis } from "./money";
 import { ProspectCard } from "./prospect-card";
 import { toast } from "./toast";
 
-// ---- 🤝 משפיענים: the influencer collab program tab (phase 1) ----
+// ---- 🤝 משפיענים: the influencer collab tab ----
 //
-// Creates personal invite links (/c/<token>), shows who signed up through
-// them, and tracks each signup through the pipeline:
-// נרשמה → נשלח מוצר → פרסמה → הסתיים.
+// Personal invite links (/c/<token>), who signed up through them, each signup
+// through the pipeline (ממתינה → מאושרת → נשלח מוצר → פרסמה → הסתיים), the
+// sales leaderboard, and the outreach list kept by hand. Every link and
+// prospect carries "who handles her" (אביה / ליאור); the chip row at the top
+// filters the whole tab by that.
 
 type Campaign = {
   id: number;
@@ -44,9 +47,11 @@ type Link = {
   sale_clicks: number;
   personal_note: string;
   is_generic: number;
+  gender: string;
   commission_paid: number;
   combines_ok: number;
   code_ended_at: string;
+  handled_by: string;
   created_at: string;
   signups: number;
   sales_count: number;
@@ -71,7 +76,6 @@ type Signup = {
   apt: string;
   floor: string;
   is_private: number;
-  zip: string;
   status: string;
   created_at: string;
 };
@@ -87,51 +91,65 @@ type Prospect = {
   personal: string;
   status: string;
   link_id: number | null;
-  source: string;
-  checked_at: string | null;
-  verified: string;
-  evidence: string;
-  verdict: string;
-  verdict_reason: string;
   next_step: string;
   followup_date: string;
-  offer: string;
-  log: string;
   size: string;
-  package_sent_at: string;
-  shoot: string;
-  version: string;
+  log: string;
+  handled_by: string;
+  created_at: string;
+};
+
+type Settings = {
+  base: string;
+  storeUrl: string;
+  discountPct: number;
+  commissionPct: number;
+  instagram: string;
+  brandName: string;
 };
 
 type CollabData = {
   ok: boolean;
-  campaign: Campaign | null;
+  me: string;
+  settings: Settings;
+  campaign: Campaign;
   products: Product[];
   links: Link[];
   signups: Signup[];
   prospects: Prospect[];
 };
 
-// המסלול של ליה (0080): מועמד → אושר לפנייה → נשלחה פנייה → ענה → סוכמו תנאים →
-// חבילה/צילום → התקבל תוכן → הושלם. הכפתור הצבעוני מקדם שלב אחד; ↩ מחזיר.
+// Outreach ladder: the colored button advances one step; ↩ goes back.
 const PSTATUS: { key: string; label: string; bg: string }[] = [
-  { key: "candidate", label: "מועמד", bg: "#fdab3d" },
-  { key: "to_contact", label: "אושר לפנייה", bg: "#676879" },
+  { key: "candidate", label: "מועמדת", bg: "#fdab3d" },
+  { key: "to_contact", label: "לפנות", bg: "#676879" },
   { key: "contacted", label: "נשלחה פנייה", bg: "#0073ea" },
-  { key: "talking", label: "ענה", bg: "#a25ddc" },
+  { key: "talking", label: "ענתה", bg: "#a25ddc" },
   { key: "agreed", label: "סוכמו תנאים", bg: "#7e3af2" },
   { key: "package_sent", label: "חבילה נשלחה", bg: "#0086c0" },
-  { key: "shoot_set", label: "צילום נקבע", bg: "#00a2b8" },
-  { key: "scheduled", label: "לבירור: חבילה או צילום?", bg: "#c98a00" },
   { key: "received", label: "התקבל תוכן", bg: "#00a359" },
   { key: "done", label: "הושלם", bg: "#037f4c" },
   { key: "linked", label: "נוצר לינק", bg: "#00a359" },
   { key: "rejected", label: "לארכיון", bg: "#e2445c" },
 ];
-// חבילה וצילום נפרדים (0083). הכפתור הצבעוני מקדם מ"סוכמו תנאים" לחבילה בלבד; "צילום נקבע"
-// נכנס רק מהטופס בכרטיס, עם אישור מפורש ופרטים. scheduled = רשומה ישנה, נפתרת בכרטיס.
-const NEXT: Record<string, string> = { candidate: "to_contact", to_contact: "contacted", contacted: "talking", talking: "agreed", agreed: "package_sent", package_sent: "received", shoot_set: "received", received: "done" };
-const PREV: Record<string, string> = { to_contact: "candidate", contacted: "to_contact", talking: "contacted", agreed: "talking", package_sent: "agreed", shoot_set: "agreed", scheduled: "agreed", done: "received" };
+const NEXT: Record<string, string> = {
+  candidate: "to_contact",
+  to_contact: "contacted",
+  contacted: "talking",
+  talking: "agreed",
+  agreed: "package_sent",
+  package_sent: "received",
+  received: "done",
+};
+const PREV: Record<string, string> = {
+  to_contact: "candidate",
+  contacted: "to_contact",
+  talking: "contacted",
+  agreed: "talking",
+  package_sent: "agreed",
+  received: "package_sent",
+  done: "received",
+};
 
 function fmtFollowers(n: number): string {
   if (n >= 1000) return `${Math.round(n / 100) / 10}K`;
@@ -149,59 +167,81 @@ function statusOf(key: string) {
   return STATUS.find((s) => s.key === key) ?? STATUS[0];
 }
 
-// Public-facing links always use the brand domain — a workers.dev URL reads
-// like phishing in a DM and some Israeli carriers block the domain outright.
-const COLLAB_BASE = "https://collab.segula.club";
-
-function pageURL(token: string): string {
-  return `${COLLAB_BASE}/c/${token}`;
+// Public-facing links use the domain from settings (collab_domain), with the
+// request origin as the fallback — a workers.dev URL reads like phishing in a
+// DM, so the partners set the real domain once and the tab follows.
+function pageURL(s: Settings, token: string): string {
+  return `${s.base}/c/${token}`;
 }
-
-// Opens WhatsApp with a ready invite message — the sender just picks the chat.
-const COMMISSION_PCT = 0.1;
-
-function saleURL(code: string): string {
-  // The tracking hop: counts the click, then forwards to the store with the
-  // discount armed.
-  return `${COLLAB_BASE}/s/${code}`;
+function saleURL(s: Settings, code: string): string {
+  return `${s.base}/s/${code}`;
 }
-
-// Her private stats page — clicks, orders, commission, updated live.
-function myURL(token: string): string {
-  return `${COLLAB_BASE}/my/${token}`;
+function myURL(s: Settings, token: string): string {
+  return `${s.base}/my/${token}`;
 }
 
 // The "you're in" WhatsApp: her code, what it gives, her share link, her
-// stats page, and the next step — one tap after approving, no manual
-// drafting per influencer.
+// stats page, and the next step — one tap after approving.
 function waApproveURL(
-  s: { full_name: string; phone: string },
+  s: Settings,
+  su: { full_name: string; phone: string },
   code: string,
   token: string,
 ): string {
-  const first = s.full_name.trim().split(/\s+/)[0] || s.full_name;
-  const digits = s.phone.replace(/\D/g, "").replace(/^0/, "972");
+  const first = su.full_name.trim().split(/\s+/)[0] || su.full_name;
+  const digits = su.phone.replace(/\D/g, "").replace(/^0/, "972");
+  const tag = s.instagram ? `@${s.instagram}` : s.brandName;
   const msg =
-    `היי ${first}! התקבלת למועדון של סגולה 🖤\n` +
+    `היי ${first}! התקבלת לשיתוף הפעולה עם ${s.brandName} 🖤\n` +
     `הקוד האישי שלך: ${code}\n` +
-    `הוא נותן לעוקבים שלך 10% הנחה על כל החנות, ומכל הזמנה שנכנסת איתו מגיעים לך 10%.\n` +
-    `הלינק שלך לשיתוף: ${saleURL(code)}\n` +
-    `הדף האישי שלך, עם כל ההזמנות והעמלות בזמן אמת: ${myURL(token)}\n` +
-    `המוצר בדרך אליך! אחרי שהוא מגיע: רילס תוך 10 ימים עם תיוג @segula.club. לכל שאלה אנחנו כאן 🙏`;
+    `הוא נותן לעוקבים שלך ${s.discountPct}% הנחה על כל החנות, ומכל הזמנה שנכנסת איתו מגיעים לך ${s.commissionPct}%.\n` +
+    `הלינק שלך לשיתוף: ${saleURL(s, code)}\n` +
+    `הדף האישי שלך, עם כל ההזמנות והעמלות בזמן אמת: ${myURL(s, token)}\n` +
+    `המוצר בדרך אליך! אחרי שהוא מגיע: רילס תוך 10 ימים עם תיוג ${tag}. לכל שאלה אנחנו כאן 🙏`;
   return `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
 }
 
-function waShareURL(l: Link): string {
+function waShareURL(s: Settings, l: Link): string {
   const first = l.name.trim().split(/\s+/)[0] || l.name;
   const msg =
-    `היי ${first}! כאן סגולה 🖤\n` +
-    `אנחנו מזמינים אותך לשתף איתנו פעולה. הכנו לך עמוד אישי עם כל הפרטים:\n` +
-    pageURL(l.token);
+    `היי ${first}! כאן ${s.brandName} 🖤\n` +
+    `אנחנו מזמינות אותך לשתף איתנו פעולה. הכנו לך עמוד אישי עם כל הפרטים:\n` +
+    pageURL(s, l.token);
   return `https://wa.me/?text=${encodeURIComponent(msg)}`;
 }
 
-// סיום שיתוף פעולה: שתי לחיצות, כי הקוד מפסיק לעבוד לכל העוקבים שלה מיד.
-// הקוד לא נמחק — העמלה שנצברה וההזמנות שכבר נזקפו נשארות במקום.
+// Who handles her: a small pill that cycles — → אביה → ליאור → —.
+function WhoPill({
+  value,
+  onChange,
+  small,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  small?: boolean;
+}) {
+  const next = value === "" ? PARTNERS[0] : value === PARTNERS[0] ? PARTNERS[1] : "";
+  const p = isPartner(value) ? PARTNER[value] : null;
+  return (
+    <button
+      type="button"
+      title={p ? `מטופלת על ידי ${p.label} · לחיצה מחליפה` : "מי מטפלת? לחיצה לבחירה"}
+      onClick={() => onChange(next)}
+      className={`rounded-full border font-bold ${small ? "h-5 min-w-5 px-1.5 text-[10.5px]" : "h-6 min-w-6 px-2 text-[11.5px]"}`}
+      style={
+        p
+          ? { backgroundColor: p.color, borderColor: p.color, color: "#fff" }
+          : { borderColor: "var(--hob-rule)", color: "var(--hob-faint)" }
+      }
+    >
+      {p ? p.letter : "—"}
+    </button>
+  );
+}
+
+// Ending a collaboration takes two taps, because the code stops working for
+// all her followers at once. The code is never deleted — the commission she
+// earned and the orders already attributed stay put.
 function EndCodeButton({ name, onConfirm }: { name: string; onConfirm: () => void }) {
   const [arming, setArming] = useState(false);
   if (!arming) {
@@ -233,23 +273,40 @@ function EndCodeButton({ name, onConfirm }: { name: string; onConfirm: () => voi
   );
 }
 
+const WHO_KEY = "hob_collab_who";
+
 export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [insta, setInsta] = useState("");
-  // Drives the public hero: "רוצה להיות SEGULA BOY/GIRL?"; empty = neutral copy
   const [linkGender, setLinkGender] = useState("");
+  const [linkWho, setLinkWho] = useState<string | null>(null);
   // "0:N" = they pick N items from stock themselves; a number = fixed product
   const [productSel, setProductSel] = useState<string>("0:1");
   const [copied, setCopied] = useState<number | null>(null);
-  // Prospect list controls: free-text search + one tag chip + one status chip,
-  // all ANDed — "כדורגל שעוד לא פנינו אליהם" is the whole point.
+  // Tab-wide filter: whose influencers to show. Remembered per browser.
+  const [who, setWho] = useState<string>(() => {
+    try {
+      return localStorage.getItem(WHO_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(WHO_KEY, who);
+    } catch {
+      // per-browser convenience only
+    }
+  }, [who]);
+  // Prospect list controls: free-text search + one status chip, ANDed.
   const [pQuery, setPQuery] = useState("");
-  const [pTag, setPTag] = useState<string>("");
   const [pStatus, setPStatus] = useState<string>("");
-  // Archive needs a second tap ("לארכיון?") — a one-tap 🗄️ next to the status
-  // pill got hit by accident on day one.
   const [armArchive, setArmArchive] = useState<number | null>(null);
+  const [openCard, setOpenCard] = useState<number | null>(null);
+  // New prospect form
+  const [np, setNp] = useState({ name: "", instagram: "", followers: "", niche: "", note: "", gender: "" });
+  const [npOpen, setNpOpen] = useState(false);
 
   const q = useQuery({
     queryKey: ["collab"],
@@ -264,44 +321,51 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["collab"] });
   const act = useMutation({
     mutationFn: (body: Record<string, unknown>) => post("/api/collab", body),
-    // כשל מוצג במפורש: עדכון שלא נשמר (כולל העברה למיכאלה שנכשלה) לא נראה כמו הצלחה.
-    // "מיכאלה קיבלה" מוצג רק אחרי שהעדכון וההעברה נשמרו יחד.
     onSuccess: (res) => {
-      const r = (res ?? {}) as { ok?: boolean; error?: string; handoff?: string };
+      const r = (res ?? {}) as { ok?: boolean; error?: string; duplicate?: boolean };
       if (r.ok === false) toast(r.error || "לא נשמר", "error");
-      else if (r.handoff) toast("נשמר, ומיכאלה קיבלה את העדכון");
+      else if (r.duplicate) toast("היא כבר ברשימה (או בארכיון)", "error");
     },
-    onError: () => toast("לא נשמר. בדוק חיבור ונסה שוב", "error"),
+    onError: () => toast("לא נשמר. בדקו חיבור ונסו שוב", "error"),
     onSettled: invalidate,
   });
 
+  const me = q.data?.me ?? "";
+  const settings: Settings = q.data?.settings ?? {
+    base: "",
+    storeUrl: "",
+    discountPct: 10,
+    commissionPct: 10,
+    instagram: "",
+    brandName: "",
+  };
+  const rate = settings.commissionPct / 100;
   const campaign = q.data?.campaign ?? null;
   const products = q.data?.products ?? [];
-  const links = q.data?.links ?? [];
-  const prospects = q.data?.prospects ?? [];
-  const signups = q.data?.signups ?? [];
+  const allLinks = q.data?.links ?? [];
+  const allProspects = q.data?.prospects ?? [];
+  const allSignups = q.data?.signups ?? [];
+
+  // The chip row filters everything below it. A signup follows its link.
+  const links = who ? allLinks.filter((l) => l.handled_by === who) : allLinks;
+  const linkIds = new Set(links.map((l) => l.id));
+  const signups = who ? allSignups.filter((s) => s.link_id != null && linkIds.has(s.link_id)) : allSignups;
+  const prospects = who ? allProspects.filter((p) => p.handled_by === who) : allProspects;
 
   const activeProspects = prospects.filter((p) => p.status !== "rejected");
-  const [openCard, setOpenCard] = useState<number | null>(null);
-  const [seeds, setSeeds] = useState("");
-  const tagOf = (p: Prospect) => `${p.note} ${p.niche}`;
   const pNeedle = pQuery.trim().toLowerCase();
   const visibleProspects = activeProspects.filter((p) => {
-    if (pTag && !tagOf(p).includes(pTag)) return false;
     if (pStatus && p.status !== pStatus) return false;
-    if (
-      pNeedle &&
-      !`${p.name} ${p.instagram} ${p.niche} ${p.note}`.toLowerCase().includes(pNeedle)
-    )
+    if (pNeedle && !`${p.name} ${p.instagram} ${p.niche} ${p.note}`.toLowerCase().includes(pNeedle))
       return false;
     return true;
   });
-  const pFiltering = !!(pTag || pStatus || pNeedle);
+  const pFiltering = !!(pStatus || pNeedle);
 
-  const copyLink = async (link: Link) => {
+  const copyText = async (text: string, key: number) => {
     try {
-      await navigator.clipboard.writeText(pageURL(link.token));
-      setCopied(link.id);
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
       setTimeout(() => setCopied(null), 1600);
     } catch {
       // Clipboard can be blocked — the URL is visible in the row anyway.
@@ -309,12 +373,12 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
   };
 
   if (q.isLoading) {
-    return <div className="py-24 text-center text-[var(--hob-faint)]">טוען משפיענים…</div>;
+    return <div className="py-24 text-center text-[var(--hob-faint)]">טוענת משפיענים…</div>;
   }
   if (!campaign) {
     return (
       <div className="py-24 text-center text-[var(--hob-faint)]">
-        אין קמפיין פעיל — צריך שורה ב-collab_campaigns.
+        לא הצלחתי לטעון את הקמפיין. נסו לרענן.
       </div>
     );
   }
@@ -322,28 +386,63 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
   const card = "rounded-xl border border-[var(--hob-rule)] bg-[var(--hob-surface)] p-4";
   const input =
     "w-full rounded-lg border border-[var(--hob-rule)] bg-[var(--hob-bg)] px-3 py-2 text-[14px] text-[var(--hob-ink)] outline-none focus:border-[var(--hob-ink)]";
+  const chip = (on: boolean, color?: string) =>
+    `rounded-full border px-3 py-1 text-[12.5px] font-semibold ${
+      on
+        ? "text-white"
+        : "border-[var(--hob-rule)] text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
+    }`;
+  const chipStyle = (on: boolean, color: string) =>
+    on ? { backgroundColor: color, borderColor: color } : undefined;
+  const newLinkWho = linkWho ?? me;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-3 py-5">
+      {/* Who: the tab-wide filter */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="me-1 text-[12.5px] text-[var(--hob-faint)]">מי מטפלת:</span>
+        <button type="button" onClick={() => setWho("")} className={chip(who === "")} style={chipStyle(who === "", "var(--hob-ink)")}>
+          הכל
+        </button>
+        {PARTNERS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setWho(who === k ? "" : k)}
+            className={chip(who === k)}
+            style={chipStyle(who === k, PARTNER[k].color)}
+          >
+            {PARTNER[k].label}
+          </button>
+        ))}
+        {who && (
+          <span className="text-[11.5px] text-[var(--hob-faint)]">
+            · {links.length} לינקים · {activeProspects.length} ברשימה
+          </span>
+        )}
+      </div>
+
       {/* Campaign settings — what the public page shows, editable in place */}
       <div className={card}>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <h2 className="text-[15px] font-extrabold text-[var(--hob-ink)]">
-            🤝 {campaign.title}
+          <h2 className="flex items-center gap-1.5 text-[15px] font-extrabold text-[var(--hob-ink)]">
+            🤝
+            <EditableText
+              value={campaign.title}
+              className="text-[15px] font-extrabold text-[var(--hob-ink)]"
+              onSave={(v) => v.trim() && act.mutate({ action: "update_campaign", id: campaign.id, title: v })}
+            />
           </h2>
-          <span className="text-[12px] text-[var(--hob-faint)]">
-            מה שכתוב כאן מופיע בעמוד הציבורי
-          </span>
+          <span className="text-[12px] text-[var(--hob-faint)]">מה שכתוב כאן מופיע בעמוד הציבורי</span>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] text-[var(--hob-faint)]">מוצר:</span>
             <EditableText
               value={campaign.product_name}
+              placeholder="הפריט שמציעות (כשלא בוחרות מהמלאי)"
               className="text-[13.5px] font-semibold text-[var(--hob-ink)]"
-              onSave={(v) =>
-                act.mutate({ action: "update_campaign", id: campaign.id, product_name: v })
-              }
+              onSave={(v) => act.mutate({ action: "update_campaign", id: campaign.id, product_name: v })}
             />
           </div>
           <div className="flex items-center gap-2">
@@ -354,7 +453,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
               inputMode="decimal"
               onSave={(v) => {
                 const n = parseMoney(v);
-                if (Number.isFinite(n) && n > 0)
+                if (Number.isFinite(n) && n >= 0)
                   act.mutate({ action: "update_campaign", id: campaign.id, product_value: n });
               }}
             />
@@ -369,6 +468,12 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
             onSave={(v) => act.mutate({ action: "update_campaign", id: campaign.id, brief: v })}
           />
         </div>
+        <p className="mt-2 text-[11.5px] text-[var(--hob-faint)]">
+          {settings.discountPct}% הנחה לקונה · {settings.commissionPct}% עמלה למשפיענית · הלינקים על{" "}
+          <span dir="ltr">{settings.base || "(אין דומיין)"}</span>
+          {settings.storeUrl ? "" : " · לא הוגדרה כתובת חנות (store_url) — לינק המכירה לא יעבוד"}
+          {" · "}משנים בהגדרות
+        </p>
       </div>
 
       {/* Funnel */}
@@ -377,9 +482,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
           {(() => {
             const opened = links.filter((l) => l.views > 0 || l.signups > 0).length;
             const approved = signups.filter((x) => x.status !== "pending").length;
-            const posted = signups.filter(
-              (x) => x.status === "posted" || x.status === "done",
-            ).length;
+            const posted = signups.filter((x) => x.status === "posted" || x.status === "done").length;
             const salesCount = links.reduce((a, l) => a + (l.sales_count || 0), 0);
             const salesTotal = links.reduce((a, l) => a + (l.sales_total || 0), 0);
             const tiles: { label: string; value: string }[] = [
@@ -407,11 +510,9 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
 
       {/* New personal link */}
       <div className={card}>
-        <h3 className="mb-3 text-[14px] font-extrabold text-[var(--hob-ink)]">
-          ＋ לינק אישי חדש
-        </h3>
+        <h3 className="mb-3 text-[14px] font-extrabold text-[var(--hob-ink)]">＋ לינק אישי חדש</h3>
         <form
-          className="flex flex-col gap-2 sm:flex-row"
+          className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"
           onSubmit={(e) => {
             e.preventDefault();
             if (!name.trim()) return;
@@ -424,19 +525,15 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
               productId: pid || null,
               picks: picks || 1,
               gender: linkGender,
+              handled_by: newLinkWho,
             });
             setName("");
             setInsta("");
           }}
         >
+          <input className={input + " sm:flex-1"} placeholder="שם (נועה כהן)" value={name} onChange={(e) => setName(e.target.value)} />
           <input
-            className={input}
-            placeholder="שם (נועה כהן)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <input
-            className={input}
+            className={input + " sm:flex-1"}
             placeholder="אינסטגרם בלי @ (noa.example)"
             dir="ltr"
             value={insta}
@@ -446,23 +543,32 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
             className={input + " sm:w-auto"}
             value={linkGender}
             onChange={(e) => setLinkGender(e.target.value)}
-            title="קובע את הכותרת בדף: רוצה להיות SEGULA BOY/GIRL?"
+            title="קובע את הפנייה בעמוד האישי"
           >
-            <option value="">בלי מגדר (נוסח נייטרלי)</option>
-            <option value="m">בחור · SEGULA BOY</option>
-            <option value="f">בחורה · SEGULA GIRL</option>
+            <option value="">פנייה נייטרלית</option>
+            <option value="f">בחורה</option>
+            <option value="m">בחור</option>
           </select>
-          <select
-            className={input + " sm:w-auto"}
-            value={productSel}
-            onChange={(e) => setProductSel(e.target.value)}
-          >
-            <option value="0:1">✨ בוחרים בעצמם מהמלאי · פריט אחד</option>
-            <option value="0:2">✨ בוחרים בעצמם מהמלאי · 2 פריטים</option>
-            <option value="0:3">✨ בוחרים בעצמם מהמלאי · 3 פריטים</option>
+          <select className={input + " sm:w-auto"} value={productSel} onChange={(e) => setProductSel(e.target.value)}>
+            <option value="0:1">✨ בוחרות בעצמן מהמלאי · פריט אחד</option>
+            <option value="0:2">✨ בוחרות בעצמן מהמלאי · 2 פריטים</option>
+            <option value="0:3">✨ בוחרות בעצמן מהמלאי · 3 פריטים</option>
             {products.map((pr) => (
               <option key={pr.id} value={`${pr.id}:1`}>
                 {pr.name} · ₪{pr.value}
+              </option>
+            ))}
+          </select>
+          <select
+            className={input + " sm:w-auto"}
+            value={newLinkWho}
+            onChange={(e) => setLinkWho(e.target.value)}
+            title="מי מטפלת במשפיענית הזאת"
+          >
+            <option value="">מי מטפלת?</option>
+            {PARTNERS.map((k) => (
+              <option key={k} value={k}>
+                {PARTNER[k].label}
               </option>
             ))}
           </select>
@@ -482,6 +588,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                 key={l.id}
                 className="group flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--hob-rule)] px-3 py-2"
               >
+                <WhoPill value={l.handled_by} onChange={(next) => act.mutate({ action: "set_handled_by", kind: "link", id: l.id, who: next })} />
                 <span className="text-[13.5px] font-semibold text-[var(--hob-ink)]">{l.name}</span>
                 {l.instagram && (
                   <a
@@ -499,7 +606,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                 </code>
                 <span className="text-[11.5px] text-[var(--hob-faint)]">
                   {l.product_id == null
-                    ? `✨ לבחירתם${l.picks > 1 ? ` · עד ${l.picks} פריטים` : ""}`
+                    ? `✨ לבחירתה${l.picks > 1 ? ` · עד ${l.picks} פריטים` : ""}`
                     : (products.find((pr) => pr.id === l.product_id)?.name ?? "")}
                 </span>
                 {l.discount_code && l.code_ended_at ? (
@@ -514,15 +621,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                   <button
                     type="button"
                     title="העתקת לינק מכירה עם ההנחה שלה"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(saleURL(l.discount_code));
-                        setCopied(-l.id);
-                        setTimeout(() => setCopied(null), 1600);
-                      } catch {
-                        // URL visible in the title anyway
-                      }
-                    }}
+                    onClick={() => copyText(saleURL(settings, l.discount_code), -l.id)}
                     className="rounded-md bg-[var(--hob-hover)] px-2 py-0.5 text-[11.5px] font-bold text-[var(--hob-ink)]"
                   >
                     {copied === -l.id ? "הועתק ✓" : `🏷️ ${l.discount_code}`}
@@ -536,26 +635,23 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                     אין קוד — ליצור
                   </button>
                 )}
-                {/* קוד ישן שנוצר לפני 24.9 מבטל את ההנחות האוטומטיות של
-                    החנות במקום להצטרף אליהן. הכפתור נעלם ברגע שהחנות
-                    מאשרת את התיקון, ולא מופיע על קודים חדשים. */}
+                {/* A code minted without store combinations cancels the
+                    store's automatic discounts instead of joining them. The
+                    button disappears once the store confirms the fix. */}
                 {l.discount_code && !l.combines_ok && !l.code_ended_at && (
                   <button
                     type="button"
-                    title="הקוד נוצר בלי שילוב הנחות: בעגלה עם סט DREAMER הוא מבטל את ההנחה האוטומטית במקום להצטרף אליה. תיקון בשופיפיי, הקוד עצמו לא משתנה."
+                    title="הקוד נוצר בלי שילוב הנחות: בעגלה עם הנחה אוטומטית הוא מבטל אותה במקום להצטרף אליה. תיקון בחנות, הקוד עצמו לא משתנה."
                     onClick={() => act.mutate({ action: "fix_combinations", id: l.id })}
                     className="rounded-md border border-[#e8a13a] bg-[#e8a13a]/10 px-2 py-0.5 text-[11.5px] font-semibold text-[#e8a13a]"
                   >
                     ⚠️ מתנגש עם הנחות — לתקן
                   </button>
                 )}
-                {/* סיום שיתוף פעולה, והדרך חזרה אם נסגר בטעות. */}
                 {l.discount_code && !l.is_generic && !l.code_ended_at && (
                   <EndCodeButton
                     name={l.name}
-                    onConfirm={() =>
-                      act.mutate({ action: "set_code_active", id: l.id, active: false })
-                    }
+                    onConfirm={() => act.mutate({ action: "set_code_active", id: l.id, active: false })}
                   />
                 )}
                 {l.discount_code && l.code_ended_at && (
@@ -572,15 +668,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                   <button
                     type="button"
                     title="העתקת דף הסטטיסטיקות האישי שלה: הזמנות, קליקים ועמלות"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(myURL(l.token));
-                        setCopied(100000 + l.id);
-                        setTimeout(() => setCopied(null), 1600);
-                      } catch {
-                        // URL visible in the title anyway
-                      }
-                    }}
+                    onClick={() => copyText(myURL(settings, l.token), 100000 + l.id)}
                     className="rounded-md bg-[var(--hob-hover)] px-2 py-0.5 text-[11.5px] font-bold text-[var(--hob-ink)]"
                   >
                     {copied === 100000 + l.id ? "הועתק ✓" : "📊 דף אישי"}
@@ -588,22 +676,14 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                 ) : null}
                 <span
                   className={`text-[11.5px] font-bold ${
-                    l.signups > 0
-                      ? "text-[#00a359]"
-                      : l.views > 0
-                        ? "text-[#e8a13a]"
-                        : "text-[var(--hob-faint)]"
+                    l.signups > 0 ? "text-[#00a359]" : l.views > 0 ? "text-[#e8a13a]" : "text-[var(--hob-faint)]"
                   }`}
                 >
-                  {l.signups > 0
-                    ? "✓ נרשמה"
-                    : l.views > 0
-                      ? `נפתח ${l.views}× · לא נרשמה`
-                      : "לא נפתח עדיין"}
+                  {l.signups > 0 ? "✓ נרשמה" : l.views > 0 ? `נפתח ${l.views}× · לא נרשמה` : "לא נפתח עדיין"}
                 </span>
                 <span className="ms-auto flex items-center gap-1">
                   <a
-                    href={waShareURL(l)}
+                    href={waShareURL(settings, l)}
                     target="_blank"
                     rel="noopener"
                     className="rounded-md bg-[#25D366] px-2.5 py-1 text-[12px] font-bold text-white hover:opacity-90"
@@ -612,7 +692,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                   </a>
                   <button
                     type="button"
-                    onClick={() => copyLink(l)}
+                    onClick={() => copyText(pageURL(settings, l.token), l.id)}
                     className="rounded-md border border-[var(--hob-rule)] px-2.5 py-1 text-[12px] font-semibold text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
                   >
                     {copied === l.id ? "הועתק ✓" : "העתקת לינק"}
@@ -640,54 +720,50 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
             ))}
           </div>
         )}
+        {links.length === 0 && allLinks.length > 0 && (
+          <div className="mt-3 text-center text-[12.5px] text-[var(--hob-faint)]">אין לינקים בסינון הזה</div>
+        )}
       </div>
 
       {/* Sales leaderboard */}
       {links.some((l) => l.discount_code || l.sales_count > 0) && (
         <div className={card}>
-          <h3 className="mb-1 text-[14px] font-extrabold text-[var(--hob-ink)]">
-            💸 ליגת המכירות
-          </h3>
+          <h3 className="mb-1 text-[14px] font-extrabold text-[var(--hob-ink)]">💸 ליגת המכירות</h3>
           <p className="mb-3 text-[12px] text-[var(--hob-faint)]">
-            10% הנחה לקונה · 10% עמלה למשפיענית · הזמנה עם הקוד שלה נזקפת לה אוטומטית
+            {settings.discountPct}% הנחה לקונה · {settings.commissionPct}% עמלה למשפיענית · הזמנה עם הקוד שלה נזקפת לה אוטומטית
           </p>
           <div className="flex flex-col gap-1.5">
             {links
               .filter((l) => l.discount_code || l.sales_count > 0)
               .sort((a, b) => b.sales_total - a.sales_total)
-              .map((l, idx) => (
-                <div
-                  key={l.id}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--hob-rule)] px-3 py-2"
-                >
-                  <span className="w-5 text-center text-[13px] font-bold text-[var(--hob-faint)]">
-                    {idx + 1}
-                  </span>
-                  <span className="text-[13.5px] font-semibold text-[var(--hob-ink)]">
-                    {l.name}
-                  </span>
-                  {l.discount_code && (
-                    <code dir="ltr" className="text-[11.5px] text-[var(--hob-faint)]">
-                      {l.discount_code}
-                    </code>
-                  )}
-                  <span className="ms-auto flex items-center gap-4 text-[12.5px] [font-variant-numeric:tabular-nums]">
-                    <span>{l.sale_clicks} קליקים</span>
-                    <span>
-                      {l.sales_count} מכירות
-                      {l.sale_clicks > 0 && l.sales_count > 0
-                        ? ` (${Math.round((l.sales_count / l.sale_clicks) * 100)}%)`
-                        : ""}{" "}
-                      · <b className="dm text-[var(--hob-ink)]">{nis(l.sales_total)}</b>
-                    </span>
-                    <span className="font-bold text-[#00a359]">
-                      עמלה <span className="dm">{nis(l.sales_total * COMMISSION_PCT)}</span>
-                    </span>
-                    {(() => {
-                      const accrued = l.sales_total * COMMISSION_PCT;
-                      const due = accrued - (l.commission_paid || 0);
-                      if (accrued <= 0) return null;
-                      return due > 0.5 ? (
+              .map((l, idx) => {
+                const accrued = l.sales_total * rate;
+                const due = accrued - (l.commission_paid || 0);
+                return (
+                  <div
+                    key={l.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--hob-rule)] px-3 py-2"
+                  >
+                    <span className="w-5 text-center text-[13px] font-bold text-[var(--hob-faint)]">{idx + 1}</span>
+                    <span className="text-[13.5px] font-semibold text-[var(--hob-ink)]">{l.name}</span>
+                    {l.discount_code && (
+                      <code dir="ltr" className="text-[11.5px] text-[var(--hob-faint)]">
+                        {l.discount_code}
+                      </code>
+                    )}
+                    <span className="ms-auto flex items-center gap-4 text-[12.5px] [font-variant-numeric:tabular-nums]">
+                      <span>{l.sale_clicks} קליקים</span>
+                      <span>
+                        {l.sales_count} מכירות
+                        {l.sale_clicks > 0 && l.sales_count > 0
+                          ? ` (${Math.round((l.sales_count / l.sale_clicks) * 100)}%)`
+                          : ""}{" "}
+                        · <b className="dm text-[var(--hob-ink)]">{nis(l.sales_total)}</b>
+                      </span>
+                      <span className="font-bold text-[#00a359]">
+                        עמלה <span className="dm">{nis(accrued)}</span>
+                      </span>
+                      {accrued <= 0 ? null : due > 0.5 ? (
                         <button
                           type="button"
                           title="סימון שהעמלה הפתוחה שולמה לה"
@@ -697,23 +773,19 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                           לתשלום <span className="dm">{nis(due)}</span> · ✓ שולם
                         </button>
                       ) : (
-                        <span className="text-[11.5px] font-bold text-[var(--hob-faint)]">
-                          ✓ שולם הכל
-                        </span>
-                      );
-                    })()}
-                  </span>
-                </div>
-              ))}
+                        <span className="text-[11.5px] font-bold text-[var(--hob-faint)]">✓ שולם הכל</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}
 
       {/* Signups */}
       <div className={card}>
-        <h3 className="mb-3 text-[14px] font-extrabold text-[var(--hob-ink)]">
-          הרשמות ({signups.length})
-        </h3>
+        <h3 className="mb-3 text-[14px] font-extrabold text-[var(--hob-ink)]">הרשמות ({signups.length})</h3>
         {signups.length === 0 && (
           <div className="py-6 text-center text-[13px] text-[var(--hob-faint)]">
             עוד אין הרשמות — שלחו לינקים אישיים ב-DM ותראו אותן נכנסות כאן
@@ -726,11 +798,19 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
             const prevIdx = STATUS.findIndex((x) => x.key === s.status) - 1;
             const prev = prevIdx >= 0 ? STATUS[prevIdx] : null;
             const waDigits = s.phone.replace(/\D/g, "").replace(/^0/, "972");
+            const link = allLinks.find((l) => l.id === s.link_id);
             return (
               <div
                 key={s.id}
                 className="group flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-[var(--hob-rule)] px-3 py-2.5"
               >
+                {link && (
+                  <WhoPill
+                    small
+                    value={link.handled_by}
+                    onChange={(n) => act.mutate({ action: "set_handled_by", kind: "link", id: link.id, who: n })}
+                  />
+                )}
                 <span className="text-[14px] font-bold text-[var(--hob-ink)]">{s.full_name}</span>
                 {s.instagram && (
                   <a
@@ -743,11 +823,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                     @{s.instagram}
                   </a>
                 )}
-                {s.product && (
-                  <span className="text-[12px] font-semibold text-[var(--hob-faint)]">
-                    {s.product}
-                  </span>
-                )}
+                {s.product && <span className="text-[12px] font-semibold text-[var(--hob-faint)]">{s.product}</span>}
                 {(s.size || s.color) && (
                   <span className="rounded-md bg-[var(--hob-hover)] px-2 py-0.5 text-[12px] font-bold text-[var(--hob-ink)]">
                     {[s.size, s.color].filter(Boolean).join(" · ")}
@@ -755,10 +831,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                 )}
                 <span className="text-[12.5px] text-[var(--hob-faint)]">
                   {s.address}
-                  {s.is_private
-                    ? " (בית פרטי)"
-                    : `${s.floor ? ` קומה ${s.floor}` : ""}${s.apt ? ` דירה ${s.apt}` : ""}`}
-                  , {s.city}
+                  {s.is_private ? " (בית פרטי)" : `${s.floor ? ` קומה ${s.floor}` : ""}${s.apt ? ` דירה ${s.apt}` : ""}`}, {s.city}
                 </span>
                 {s.phone && (
                   <a
@@ -774,12 +847,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                 {(s.status === "posted" || s.status === "done" || s.reel_url) && (
                   <span className="flex items-center gap-2 text-[12px]">
                     {s.reel_url ? (
-                      <a
-                        href={s.reel_url}
-                        target="_blank"
-                        rel="noopener"
-                        className="font-bold text-[#a25ddc] hover:underline"
-                      >
+                      <a href={s.reel_url} target="_blank" rel="noopener" className="font-bold text-[#a25ddc] hover:underline">
                         ▶ רילס
                       </a>
                     ) : null}
@@ -796,70 +864,54 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                       inputMode="numeric"
                       onSave={(v) => {
                         const n = Number(v.replace(/[^\d]/g, ""));
-                        if (Number.isFinite(n))
-                          act.mutate({ action: "update_reel", id: s.id, reel_views: n });
+                        if (Number.isFinite(n)) act.mutate({ action: "update_reel", id: s.id, reel_views: n });
                       }}
                     />
                     <button
                       type="button"
-                      title="קיבלנו ממנה את קובץ הווידאו המקורי (זכויות שימוש בממומן)"
-                      onClick={() =>
-                        act.mutate({ action: "file_received", id: s.id, value: !s.file_received })
-                      }
+                      title="קיבלנו ממנה את קובץ הווידאו המקורי (זכויות שימוש בפרסום)"
+                      onClick={() => act.mutate({ action: "file_received", id: s.id, value: !s.file_received })}
                       className={
                         s.file_received
                           ? "rounded-md bg-[#a25ddc] px-2 py-0.5 text-[11.5px] font-bold text-white"
                           : "rounded-md border border-[var(--hob-rule)] px-2 py-0.5 text-[11.5px] text-[var(--hob-faint)] hover:bg-[var(--hob-hover)]"
                       }
                     >
-                      {s.file_received ? "🎬 קובץ אצלנו · מוכן לממומן" : "＋ קובץ מקורי"}
+                      {s.file_received ? "🎬 קובץ אצלנו" : "＋ קובץ מקורי"}
                     </button>
                   </span>
                 )}
                 <span className="ms-auto flex items-center gap-1.5">
                   {s.status === "pending" ? (
                     <>
-                      <span className="rounded-md bg-[#e8a13a] px-2.5 py-1 text-[12px] font-bold text-white">
-                        ⏳ ממתינה לאישור
-                      </span>
+                      <span className="rounded-md bg-[#e8a13a] px-2.5 py-1 text-[12px] font-bold text-white">⏳ ממתינה לאישור</span>
                       <button
                         type="button"
-                        onClick={() =>
-                          act.mutate({ action: "update_status", id: s.id, status: "signed" })
-                        }
+                        onClick={() => act.mutate({ action: "update_status", id: s.id, status: "signed" })}
                         className="rounded-md bg-[#00a359] px-2.5 py-1 text-[12px] font-bold text-white hover:opacity-90"
                       >
                         ✓ אישור
                       </button>
-                      <DeleteButton
-                        onConfirm={() => act.mutate({ action: "delete_signup", id: s.id })}
-                      />
+                      <DeleteButton onConfirm={() => act.mutate({ action: "delete_signup", id: s.id })} />
                     </>
                   ) : (
                     <>
-                      {(() => {
-                        const link = links.find((l) => l.id === s.link_id);
-                        const code = link?.discount_code;
-                        if (!link || !code || !s.phone) return null;
-                        return (
-                          <a
-                            href={waApproveURL(s, code, link.token)}
-                            target="_blank"
-                            rel="noopener"
-                            title="ווצאפ מוכן: התקבלת + הקוד + לינק השיתוף + הצעד הבא"
-                            className="rounded-md bg-[#25D366] px-2.5 py-1 text-[12px] font-bold text-white hover:opacity-90"
-                          >
-                            📲 הודעת אישור
-                          </a>
-                        );
-                      })()}
+                      {link && link.discount_code && s.phone ? (
+                        <a
+                          href={waApproveURL(settings, s, link.discount_code, link.token)}
+                          target="_blank"
+                          rel="noopener"
+                          title="ווצאפ מוכן: התקבלת + הקוד + לינק השיתוף + הצעד הבא"
+                          className="rounded-md bg-[#25D366] px-2.5 py-1 text-[12px] font-bold text-white hover:opacity-90"
+                        >
+                          📲 הודעת אישור
+                        </a>
+                      ) : null}
                       {prev && (
                         <button
                           type="button"
                           title={`צעד אחורה: ${prev.label}`}
-                          onClick={() =>
-                            act.mutate({ action: "update_status", id: s.id, status: prev.key })
-                          }
+                          onClick={() => act.mutate({ action: "update_status", id: s.id, status: prev.key })}
                           className="rounded-md border border-[var(--hob-rule)] px-1.5 py-1 text-[12px] text-[var(--hob-faint)] hover:bg-[var(--hob-hover)]"
                         >
                           ↩
@@ -868,17 +920,13 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                       <button
                         type="button"
                         title={`מעבר לסטטוס הבא: ${next.label}`}
-                        onClick={() =>
-                          act.mutate({ action: "update_status", id: s.id, status: next.key })
-                        }
+                        onClick={() => act.mutate({ action: "update_status", id: s.id, status: next.key })}
                         className="rounded-md px-2.5 py-1 text-[12px] font-bold text-white"
                         style={{ backgroundColor: st.bg }}
                       >
                         {st.label}
                       </button>
-                      <DeleteButton
-                        onConfirm={() => act.mutate({ action: "delete_signup", id: s.id })}
-                      />
+                      <DeleteButton onConfirm={() => act.mutate({ action: "delete_signup", id: s.id })} />
                     </>
                   )}
                 </span>
@@ -890,12 +938,64 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
 
       {/* Outreach prospects */}
       <div className={card}>
-        <h3 className="mb-1 text-[14px] font-extrabold text-[var(--hob-ink)]">
-          🎯 רשימת פניות ({pFiltering ? `${visibleProspects.length} מתוך ${activeProspects.length}` : activeProspects.length})
-        </h3>
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-[14px] font-extrabold text-[var(--hob-ink)]">
+            🎯 רשימת פניות ({pFiltering ? `${visibleProspects.length} מתוך ${activeProspects.length}` : activeProspects.length})
+          </h3>
+          <button
+            type="button"
+            onClick={() => setNpOpen((v) => !v)}
+            className="rounded-md border border-[var(--hob-rule)] px-2.5 py-1 text-[12px] font-semibold text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
+          >
+            {npOpen ? "סגירה" : "＋ הוספה לרשימה"}
+          </button>
+        </div>
         <p className="mb-3 text-[12px] text-[var(--hob-faint)]">
-          לחיצה על הסטטוס מקדמת אותו · "יצירת לינק" הופכת מועמד/ת למשפיען/ית פעיל/ה
+          לחיצה על הסטטוס מקדמת אותו · "יצירת לינק" הופכת מועמדת למשפיענית פעילה
         </p>
+        {npOpen && (
+          <form
+            className="mb-3 grid grid-cols-2 gap-2 rounded-lg border border-dashed border-[var(--hob-rule)] p-3 sm:grid-cols-3"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              if (!np.name.trim()) return;
+              act.mutate({
+                action: "add_prospect",
+                name: np.name.trim(),
+                instagram: np.instagram.trim(),
+                followers: Number(np.followers.replace(/[^\d]/g, "")) || 0,
+                niche: np.niche.trim(),
+                note: np.note.trim(),
+                gender: np.gender,
+                handled_by: who || me,
+              });
+              setNp({ name: "", instagram: "", followers: "", niche: "", note: "", gender: "" });
+            }}
+          >
+            <input className={input} placeholder="שם" value={np.name} onChange={(e) => setNp({ ...np, name: e.target.value })} />
+            <input className={input} placeholder="אינסטגרם בלי @" dir="ltr" value={np.instagram} onChange={(e) => setNp({ ...np, instagram: e.target.value })} />
+            <input className={input} placeholder="עוקבים (12000)" inputMode="numeric" value={np.followers} onChange={(e) => setNp({ ...np, followers: e.target.value })} />
+            <input className={input} placeholder="נישה (אופנה, לייף סטייל)" value={np.niche} onChange={(e) => setNp({ ...np, niche: e.target.value })} />
+            <select className={input} value={np.gender} onChange={(e) => setNp({ ...np, gender: e.target.value })}>
+              <option value="">מגדר (רשות)</option>
+              <option value="f">בחורה</option>
+              <option value="m">בחור</option>
+            </select>
+            <input className={input} placeholder="הערה" value={np.note} onChange={(e) => setNp({ ...np, note: e.target.value })} />
+            <div className="col-span-2 flex items-center justify-between gap-2 sm:col-span-3">
+              <span className="text-[11.5px] text-[var(--hob-faint)]">
+                תטופל על ידי {isPartner(who || me) ? PARTNER[(who || me) as "avia" | "lior"].label : "— (אפשר לשנות בשורה)"}
+              </span>
+              <button
+                type="submit"
+                disabled={!np.name.trim() || act.isPending}
+                className="rounded-lg bg-[var(--hob-ink)] px-4 py-1.5 text-[13px] font-bold text-[var(--hob-bg)] disabled:opacity-50"
+              >
+                הוספה
+              </button>
+            </div>
+          </form>
+        )}
         {activeProspects.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-1.5">
             <input
@@ -904,27 +1004,6 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
               placeholder="חיפוש שם / @ / נישה"
               className="h-8 w-full max-w-[240px] rounded-md border border-[var(--hob-rule)] bg-transparent px-2.5 text-[12.5px] text-[var(--hob-ink)] placeholder:text-[var(--hob-faint)] focus:outline-none"
             />
-            {(
-              [
-                ["⚽", "⚽ כדורגל"],
-                ["🔥", "🔥 כבר עוקבים"],
-                ["⭐", "⭐ עוגנים"],
-              ] as const
-            ).map(([tag, label]) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => setPTag(pTag === tag ? "" : tag)}
-                className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold ${
-                  pTag === tag
-                    ? "border-[var(--hob-ink)] bg-[var(--hob-ink)] text-[var(--hob-bg)]"
-                    : "border-[var(--hob-rule)] text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-            <span className="mx-0.5 h-5 w-px bg-[var(--hob-rule)]" />
             {PSTATUS.filter((s) => s.key !== "rejected").map((s) => (
               <button
                 key={s.key}
@@ -945,7 +1024,6 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                 type="button"
                 onClick={() => {
                   setPQuery("");
-                  setPTag("");
                   setPStatus("");
                 }}
                 className="rounded-full px-2 py-1 text-[12px] font-semibold text-[var(--hob-faint)] hover:text-[var(--hob-ink)]"
@@ -955,43 +1033,29 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
             )}
           </div>
         )}
-        <form
-          className="mb-2 flex flex-wrap items-center gap-1.5"
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            if (seeds.trim()) act.mutate({ action: "seed_handles", handles: seeds });
-            setSeeds("");
-          }}
-        >
-          <input value={seeds} onChange={(ev) => setSeeds(ev.target.value)} placeholder="ידיות לבדיקה של ליה בריצה הבאה (למשל @noa.agam, @someone)" dir="ltr" className="min-w-[240px] flex-1 rounded-md border border-[var(--hob-rule)] bg-[var(--hob-bg)] px-2 py-1 text-[12px] text-[var(--hob-ink)] outline-none" />
-          <button type="submit" className="rounded-md border border-[var(--hob-rule)] px-2.5 py-1 text-[12px] font-semibold text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]">שמור לבדיקה</button>
-        </form>
-        {prospects.length === 0 && (
+        {activeProspects.length === 0 && (
           <div className="py-5 text-center text-[13px] text-[var(--hob-faint)]">
-            אין עדיין מועמדים. ליה מוסיפה עד 5 בשבוע, אחרי אימות מול אינסטגרם.
+            {allProspects.length && who ? "אין ברשימה של " + (isPartner(who) ? PARTNER[who].label : "") : "הרשימה ריקה. הוסיפו את מי שרוצות לפנות אליהן."}
           </div>
         )}
         {pFiltering && visibleProspects.length === 0 && activeProspects.length > 0 && (
-          <div className="py-4 text-center text-[13px] text-[var(--hob-faint)]">
-            אין תוצאות לסינון הזה
-          </div>
+          <div className="py-4 text-center text-[13px] text-[var(--hob-faint)]">אין תוצאות לסינון הזה</div>
         )}
         <div className="flex flex-col gap-1.5">
           {visibleProspects.map((p) => {
             const st = PSTATUS.find((x) => x.key === p.status) ?? PSTATUS[0];
             const next = PSTATUS.find((x) => x.key === NEXT[p.status]);
-            const prevKey = p.status === "received" ? (p.shoot ? "shoot_set" : p.package_sent_at ? "package_sent" : "agreed") : PREV[p.status];
-            const prevP = PSTATUS.find((x) => x.key === prevKey);
-            const overdue = p.followup_date && p.followup_date <= new Date().toISOString().slice(0, 10) && !["done", "rejected", "candidate"].includes(p.status);
+            const prevP = PSTATUS.find((x) => x.key === PREV[p.status]);
+            const today = new Date().toISOString().slice(0, 10);
+            const overdue = !!p.followup_date && p.followup_date <= today && !["done", "rejected", "linked"].includes(p.status);
             const open = openCard === p.id;
             return (
               <div
                 key={p.id}
                 className="group flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--hob-rule)] px-3 py-2"
               >
-                <span className="text-[13.5px] font-semibold text-[var(--hob-ink)]">
-                  {p.name}
-                </span>
+                <WhoPill value={p.handled_by} onChange={(n) => act.mutate({ action: "set_handled_by", kind: "prospect", id: p.id, who: n })} />
+                <span className="text-[13.5px] font-semibold text-[var(--hob-ink)]">{p.name}</span>
                 {p.instagram && (
                   <a
                     href={`https://instagram.com/${p.instagram}`}
@@ -1003,28 +1067,38 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                     @{p.instagram}
                   </a>
                 )}
-                <span className="rounded-md bg-[var(--hob-hover)] px-2 py-0.5 text-[11.5px] font-bold text-[var(--hob-ink)] [font-variant-numeric:tabular-nums]">
-                  {fmtFollowers(p.followers)}
-                </span>
-                {p.niche && (
-                  <span className="text-[11.5px] text-[var(--hob-faint)]">{p.niche}</span>
+                {p.followers > 0 && (
+                  <span className="rounded-md bg-[var(--hob-hover)] px-2 py-0.5 text-[11.5px] font-bold text-[var(--hob-ink)] [font-variant-numeric:tabular-nums]">
+                    {fmtFollowers(p.followers)}
+                  </span>
                 )}
+                {p.niche && <span className="text-[11.5px] text-[var(--hob-faint)]">{p.niche}</span>}
                 {p.note && (
                   <span className="max-w-[340px] truncate text-[11.5px] text-[var(--hob-faint)]" title={p.note}>
                     {p.note}
                   </span>
                 )}
-                {p.verdict && <span className="text-[11px]" title={p.verdict_reason}>{p.verdict === "fit" ? "✅" : p.verdict === "not_fit" ? "⛔" : "⏳"}</span>}
+                {p.next_step && !open && (
+                  <span className="max-w-[260px] truncate text-[11.5px] text-[var(--hob-soft)]" title={p.next_step}>
+                    → {p.next_step}
+                  </span>
+                )}
                 {overdue && <span className="rounded-md bg-[#e2445c]/15 px-1.5 py-0.5 text-[11px] font-semibold text-[#e2445c]">מעקב עבר</span>}
-                {!overdue && p.followup_date && !["done", "rejected"].includes(p.status) && <span className="text-[11px] text-[var(--hob-faint)]">מעקב {p.followup_date.slice(5)}</span>}
-                <button type="button" onClick={() => setOpenCard(open ? null : p.id)} className="rounded-md border border-[var(--hob-rule)] px-1.5 py-0.5 text-[11.5px] text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]">{open ? "סגור" : "פרטים"}</button>
+                {!overdue && p.followup_date && !["done", "rejected"].includes(p.status) && (
+                  <span className="text-[11px] text-[var(--hob-faint)]">מעקב {p.followup_date.slice(8, 10)}/{p.followup_date.slice(5, 7)}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOpenCard(open ? null : p.id)}
+                  className="rounded-md border border-[var(--hob-rule)] px-1.5 py-0.5 text-[11.5px] text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
+                >
+                  {open ? "סגירה" : "פרטים"}
+                </button>
                 <span className="ms-auto flex items-center gap-1.5">
                   {p.status !== "linked" && p.status !== "rejected" && (
                     <button
                       type="button"
-                      onClick={() =>
-                        act.mutate({ action: "prospect_link", id: p.id, campaignId: campaign.id })
-                      }
+                      onClick={() => act.mutate({ action: "prospect_link", id: p.id, campaignId: campaign.id })}
                       className="rounded-md border border-[var(--hob-rule)] px-2.5 py-1 text-[12px] font-semibold text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
                     >
                       יצירת לינק
@@ -1032,23 +1106,15 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                   )}
                   {p.status === "linked" &&
                     (() => {
-                      // The link is born at the top of the page — hand its URL
-                      // right here so promoting never feels like a dead click.
-                      const pl = links.find((l) => l.id === p.link_id);
+                      // The link is born at the top of the page — hand its
+                      // URL right here so promoting never feels like a dead click.
+                      const pl = allLinks.find((l) => l.id === p.link_id);
                       if (!pl) return null;
                       return (
                         <button
                           type="button"
-                          title={pageURL(pl.token)}
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(pageURL(pl.token));
-                              setCopied(200000 + p.id);
-                              setTimeout(() => setCopied(null), 1600);
-                            } catch {
-                              // URL visible in the title anyway
-                            }
-                          }}
+                          title={pageURL(settings, pl.token)}
+                          onClick={() => copyText(pageURL(settings, pl.token), 200000 + p.id)}
                           className="rounded-md bg-[#00a359] px-2.5 py-1 text-[12px] font-bold text-white hover:opacity-90"
                         >
                           {copied === 200000 + p.id ? "הועתק ✓" : "📋 העתקת הדף האישי"}
@@ -1081,9 +1147,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                     <button
                       type="button"
                       title={`צעד אחורה: ${prevP.label}`}
-                      onClick={() =>
-                        act.mutate({ action: "prospect_status", id: p.id, status: prevP.key, version: p.version })
-                      }
+                      onClick={() => act.mutate({ action: "prospect_status", id: p.id, status: prevP.key })}
                       className="rounded-md border border-[var(--hob-rule)] px-1.5 py-1 text-[12px] text-[var(--hob-faint)] hover:bg-[var(--hob-hover)]"
                     >
                       ↩
@@ -1091,17 +1155,15 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                   )}
                   <button
                     type="button"
-                    title={next ? `מעבר ל: ${next.label}` : p.status === "scheduled" ? "רשומה ישנה: פתח פרטים ובחר מה קרה בפועל" : st.label}
-                    disabled={!next || p.status === "linked"}
-                    onClick={() => next && act.mutate({ action: "prospect_status", id: p.id, status: next.key, version: p.version })}
+                    title={next ? `מעבר ל: ${next.label}` : st.label}
+                    disabled={!next}
+                    onClick={() => next && act.mutate({ action: "prospect_status", id: p.id, status: next.key })}
                     className="rounded-md px-2.5 py-1 text-[12px] font-bold text-white disabled:opacity-70"
                     style={{ backgroundColor: st.bg }}
                   >
                     {st.label}
                   </button>
-                  <DeleteButton
-                    onConfirm={() => act.mutate({ action: "delete_prospect", id: p.id })}
-                  />
+                  <DeleteButton onConfirm={() => act.mutate({ action: "delete_prospect", id: p.id })} />
                 </span>
                 {open && <ProspectCard p={p} act={(body) => act.mutate(body)} />}
               </div>
@@ -1111,7 +1173,7 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
         {prospects.some((p) => p.status === "rejected") && (
           <details className="mt-3">
             <summary className="cursor-pointer text-[12.5px] font-semibold text-[var(--hob-faint)]">
-              🗄️ ארכיון ({prospects.filter((p) => p.status === "rejected").length}) — נשמרים כדי שלא ניצור כפילויות
+              🗄️ ארכיון ({prospects.filter((p) => p.status === "rejected").length}) — נשמרות כדי שלא ניצור כפילויות
             </summary>
             <div className="mt-2 flex flex-col gap-1">
               {prospects
@@ -1121,22 +1183,16 @@ export function InfluencersView({ onAuthLost }: { onAuthLost: () => void }) {
                     key={p.id}
                     className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--hob-rule)] px-3 py-1.5 opacity-60"
                   >
-                    <span className="text-[12.5px] font-semibold text-[var(--hob-ink)]">
-                      {p.name}
-                    </span>
+                    <span className="text-[12.5px] font-semibold text-[var(--hob-ink)]">{p.name}</span>
                     {p.instagram && (
                       <span dir="ltr" className="text-[11.5px] text-[var(--hob-faint)]">
                         @{p.instagram}
                       </span>
                     )}
-                    <span className="text-[11px] text-[var(--hob-faint)]">
-                      {fmtFollowers(p.followers)}
-                    </span>
+                    {p.followers > 0 && <span className="text-[11px] text-[var(--hob-faint)]">{fmtFollowers(p.followers)}</span>}
                     <button
                       type="button"
-                      onClick={() =>
-                        act.mutate({ action: "prospect_status", id: p.id, status: "to_contact" })
-                      }
+                      onClick={() => act.mutate({ action: "prospect_status", id: p.id, status: "to_contact" })}
                       className="ms-auto rounded-md border border-[var(--hob-rule)] px-2 py-0.5 text-[11.5px] text-[var(--hob-ink)] hover:bg-[var(--hob-hover)]"
                     >
                       החזרה לרשימה

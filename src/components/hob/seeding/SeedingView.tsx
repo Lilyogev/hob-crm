@@ -17,8 +17,9 @@ import {
 } from "../board";
 // Shekel amounts. In demo mode (🥷) body.hob-demo CSS smears every .dm span.
 import { POPUP_BUYER, PopupMode } from "./PopupMode";
-import { AddGiftForm, AddItemRow, AddLineInline, AddSaleForm, ArchiveToggle, BUCKETS, BucketCell, COLLECTIONS, CollectionHeader, CollectionPicker, CustomerDetails, GIFT_COLOR, GIFT_RANK, GIFT_STATUS, GIFT_STATUS_ORDER, GroupTotalEdit, ILS, ITEM_COLOR, KindCell, compareKinds, kindStyle, saleGroupKey, LOCATIONS, PAY_METHOD, PAY_METHOD_ORDER, PopupBadge, QtyStepper, RepeatBadge, SALE_COLOR, SHIP_RANK, SHIP_STATUS, SHIP_STATUS_ORDER, SeedGift, SeedSale, SeedingData, Shs, SizePicker, StatsPanel, TransferInline, bucketSum, hasContact, itemCollection, itemTotal, rowTotal, stockAt } from "./shared";
+import { AddGiftForm, AddItemRow, AddLineInline, AddSaleForm, ArchiveToggle, BUCKETS, BucketCell, CollectionHeader, CollectionPicker, CustomerDetails, GIFT_COLOR, GIFT_RANK, GIFT_STATUS, GIFT_STATUS_ORDER, GroupTotalEdit, HANDLED_BY, HANDLED_BY_ORDER, ILS, ITEM_COLOR, KindCell, LocDot, compareKinds, collectionGroups, kindStyle, saleGroupKey, LOCATIONS, PAY_METHOD, PAY_METHOD_ORDER, PopupBadge, QtyStepper, ReceiveInline, RepeatBadge, SALE_COLOR, SHIP_RANK, SHIP_STATUS, SHIP_STATUS_ORDER, SeedGift, SeedSale, SeedingData, Shs, SizePicker, StatsPanel, TransferInline, bucketSum, hasContact, itemCollection, itemTotal, locationMeta, rowTotal, stockAt } from "./shared";
 import { NoteCell } from "../note-cell";
+import { OrdersPanel } from "./OrdersPanel";
 
 let consumedPopupSignal = 0;
 export function SeedingView({
@@ -65,11 +66,12 @@ export function SeedingView({
   const act = (body: Record<string, unknown>) => mutate.mutate(body);
 
   const items = seedingQuery.data?.items ?? [];
+  const collections = seedingQuery.data?.collections ?? [];
   const gifts = seedingQuery.data?.gifts ?? [];
   const sales = seedingQuery.data?.sales ?? [];
 
-  // Archive rows (imported previous-drop orders) enrich the buyer-grouped log
-  // and the repeat badge, but stay OUT of the current-drop numbers.
+  // Archive rows (imported history) enrich the buyer-grouped log and the
+  // repeat badge, but stay OUT of the current numbers.
   const liveSales = useMemo(
     () => sales.filter((s) => s.channel !== "archive" && s.ship_status !== "cancelled"),
     [sales],
@@ -91,23 +93,26 @@ export function SeedingView({
     return { inStock, givenOut, soldOut, revenue, giftPeople, salePeople };
   }, [items, gifts, liveSales]);
 
-  // The stock screen is grouped by collection, and each group carries its own
-  // three numbers — an empty group is dropped so a one-collection tracker
-  // looks exactly like it did before groups existed.
+  // The stock screen is grouped by collection (free text on the item), and
+  // each group carries its own numbers. An empty group is dropped so a
+  // one-collection stock looks like a plain table.
   const itemGroups = useMemo(
     () =>
-      COLLECTIONS.map((c) => {
-        const rows = items.filter((i) => itemCollection(i) === c.key);
-        return {
-          ...c,
-          rows,
-          inStock: rows.reduce((s, i) => s + itemTotal(i), 0),
-          given: rows.reduce((s, i) => s + i.given, 0),
-          sold: rows.reduce((s, i) => s + i.sold, 0),
-        };
-      }).filter((g) => g.rows.length > 0),
-    [items],
+      collectionGroups(items, collections)
+        .map((c) => {
+          const rows = items.filter((i) => itemCollection(i) === c.key);
+          return {
+            ...c,
+            rows,
+            inStock: rows.reduce((s, i) => s + itemTotal(i), 0),
+            given: rows.reduce((s, i) => s + i.given, 0),
+            sold: rows.reduce((s, i) => s + i.sold, 0),
+          };
+        })
+        .filter((g) => g.rows.length > 0),
+    [items, collections],
   );
+  const collectionKeys = useMemo(() => collectionGroups(items, collections).map((c) => c.key), [items, collections]);
 
   // The revenue tile opens into this: the same money split by where it landed.
   // Store orders are in the bank; Bit and cash are in someone's pocket.
@@ -120,7 +125,7 @@ export function SeedingView({
       row.units += s.qty;
       m.set(key, row);
     }
-    return ["shopify", "hyp", "bit", "cash", "transfer", ""]
+    return ["shopify", "bit", "cash", "transfer", ""]
       .map((key) => ({ key, ...(m.get(key) ?? { amount: 0, units: 0 }) }))
       .filter((r) => r.amount > 0);
   }, [liveSales]);
@@ -197,8 +202,8 @@ export function SeedingView({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (key: string) => setExpanded((e) => ({ ...e, [key]: !e[key] }));
 
-  // Previous-drop buyers live behind a collapsible divider at the log's
-  // bottom; the open/closed choice sticks per device.
+  // Archived buyers live behind a collapsible divider at the log's bottom;
+  // the open/closed choice sticks per device.
   const [archiveOpen, setArchiveOpen] = useState<boolean>(() => {
     if (typeof localStorage === "undefined") return false;
     return localStorage.getItem("hob_arch_open") === "1";
@@ -217,8 +222,8 @@ export function SeedingView({
     () => saleGroups.filter((g) => g.rows.every((r) => r.channel === "archive")),
     [saleGroups],
   );
-  // What the log actually renders: current-drop buyers, then the divider
-  // sentinel, then (only when open) the archive buyers.
+  // What the log actually renders: current buyers, then the divider sentinel,
+  // then (only when open) the archive buyers.
   const displaySaleGroups = useMemo(() => {
     const current = saleGroups.filter((g) => g.rows.some((r) => r.channel !== "archive"));
     if (!archiveGroups.length) return current;
@@ -289,12 +294,12 @@ export function SeedingView({
   };
 
   if (seedingQuery.isLoading) {
-    return <div className="py-24 text-center text-[var(--hob-faint)]">טוען את החלוקות…</div>;
+    return <div className="py-24 text-center text-[var(--hob-faint)]">טוען את המלאי…</div>;
   }
   if (seedingQuery.isError && !seedingQuery.data && (seedingQuery.error as Error).message !== "unauthorized") {
     return (
       <div className="py-24 text-center text-[#e2445c]">
-        שגיאה בטעינת החלוקות — נסו לרענן את הדף.
+        שגיאה בטעינת המלאי — נסו לרענן את הדף.
       </div>
     );
   }
@@ -461,12 +466,12 @@ export function SeedingView({
               </div>
               <div className="mt-1 text-[11px] text-[var(--hob-faint)] dm-block">
                 {popupStats.buyers} קונים {popupStats.events === 1 ? "באירוע אחד" : `ב-${popupStats.events} אירועים`} —
-                החלק מתוך ההכנסות שהגיע מדוכנים (הכסף עצמו נספר למעלה לפי ביט/מזומן/Hyp)
+                החלק מתוך ההכנסות שהגיע מדוכנים (הכסף עצמו נספר למעלה לפי ביט/מזומן/העברה)
               </div>
             </div>
           )}
           <div className="mt-2 text-[11px] leading-relaxed text-[var(--hob-faint)]">
-            🛍 שופיפיי = כבר בבנק · 📱 ביט ו-💵 מזומן = הכסף אצלך
+            🛍 שופיפיי = כבר בבנק · 📱 ביט ו-💵 מזומן = הכסף אצל מי שמכרה
             {moneyRows.some((r) => r.key === "") &&
               " · «לא סומן» — מכירות ידניות ישנות, אפשר לתייג בעמודת «תשלום» בטבלת המכירות"}
           </div>
@@ -483,8 +488,13 @@ export function SeedingView({
         >
           📦 מלאי
           <span className="text-xs font-normal text-[var(--hob-faint)]">
-            {items.length > 0 ? `${items.length} פריטים` : "הוסיפו את הפריטים שיש לכם לחלוקה"}
+            {items.length > 0 ? `${items.length} פריטים · ${LOCATIONS.map((l) => `${l.label} ${items.reduce((s, i) => s + rowTotal(stockAt(i, l.key)), 0)}`).join(" · ")}` : "הוסיפו את הפריטים שלכן"}
           </span>
+          {items.length > 0 && (
+            <a href="/api/seeding?export=stock" className="ms-auto text-[11.5px] font-normal text-[var(--hob-faint)] hover:text-[var(--hob-accent)]" title="הורדת טבלת המלאי כקובץ CSV">
+              ⬇ CSV
+            </a>
+          )}
         </div>
 
         {/* Mobile: cards, grouped by collection */}
@@ -529,14 +539,30 @@ export function SeedingView({
                     }}
                   />
                 </div>
-                {itemGroups.length > 1 && (
-                  <CollectionPicker
-                    value={itemCollection(i)}
-                    onChange={(v) =>
-                      act({ action: "item_update", id: i.id, patch: { collection: v } })
-                    }
+                <span title="עלות ליחידה">עלות:</span>
+                <div className="w-16 rounded-md border border-[var(--hob-rule)]">
+                  <EditableText
+                    value={i.unit_cost ? String(i.unit_cost) : ""}
+                    placeholder="₪"
+                    className="dm text-center text-[13px]"
+                    inputMode="decimal"
+                    onSave={(v) => {
+                      const p = parseMoney(v);
+                      if (Number.isFinite(p) && p >= 0) {
+                        act({ action: "item_update", id: i.id, patch: { unit_cost: p } });
+                      }
+                    }}
                   />
-                )}
+                </div>
+              </div>
+              <div className="mt-1 flex items-center gap-2 px-1 text-xs text-[var(--hob-soft)]">
+                קולקציה:
+                <CollectionPicker
+                  value={itemCollection(i)}
+                  options={collectionKeys}
+                  compact
+                  onChange={(v) => act({ action: "item_update", id: i.id, patch: { collection: v } })}
+                />
               </div>
               <div className="mt-1.5 space-y-1">
                 {LOCATIONS.map((l) => {
@@ -555,8 +581,8 @@ export function SeedingView({
                         >
                           ▾
                         </span>
-                        {l.icon} {l.label}
-                        <b className="ms-auto">{rowTotal(row)}</b>
+                        <LocDot loc={l.key} /> {l.label}
+                        <b className="dm ms-auto">{rowTotal(row)}</b>
                       </button>
                       {isOpen && (
                         <div className="border-t border-[var(--hob-hover)] p-1.5">
@@ -580,7 +606,7 @@ export function SeedingView({
                               </div>
                             ))}
                           </div>
-                          <div className="mt-1.5">
+                          <div className="mt-1.5 space-y-1.5">
                             <TransferInline
                               from={l.key}
                               onTransfer={(to, size, qty) =>
@@ -594,6 +620,10 @@ export function SeedingView({
                                 })
                               }
                             />
+                            <ReceiveInline
+                              at={l.key}
+                              onReceive={(size, qty) => act({ action: "stock_receive", id: i.id, location: l.key, size, qty })}
+                            />
                           </div>
                         </div>
                       )}
@@ -606,7 +636,7 @@ export function SeedingView({
             </div>
           ))}
           <div className="overflow-hidden rounded-lg border border-[var(--hob-rule)] bg-[var(--hob-surface)]">
-            <AddItemRow onAdd={(name, size, qty) => act({ action: "item_add", name, size, qty })} />
+            <AddItemRow collections={collectionKeys} onAdd={(it) => act({ action: "item_add", ...it })} />
           </div>
         </div>
 
@@ -721,18 +751,36 @@ export function SeedingView({
                       <DeleteButton onConfirm={() => act({ action: "item_del", id: i.id })} />
                     </div>
                   </div>
-                  {isOpen && itemGroups.length > 1 && (
+                  {isOpen && (
                     <div
-                      className="flex items-center gap-2 border-t border-[var(--hob-hover)] bg-[var(--hob-bg2)] py-1.5 ps-7 text-[12px] text-[var(--hob-soft)]"
+                      className="flex flex-wrap items-center gap-2 border-t border-[var(--hob-hover)] bg-[var(--hob-bg2)] py-1.5 ps-7 text-[12px] text-[var(--hob-soft)]"
                       style={{ borderInlineStart: "5px solid #e6e9f2" }}
                     >
                       קולקציה:
                       <CollectionPicker
                         value={itemCollection(i)}
+                        options={collectionKeys}
+                        compact
                         onChange={(v) =>
                           act({ action: "item_update", id: i.id, patch: { collection: v } })
                         }
                       />
+                      <span className="ms-3">עלות ליחידה:</span>
+                      <div className="w-16 rounded-md border border-[var(--hob-rule)] bg-[var(--hob-surface)]">
+                        <EditableText
+                          value={i.unit_cost ? String(i.unit_cost) : ""}
+                          placeholder="₪"
+                          className="dm text-center text-[12px]"
+                          inputMode="decimal"
+                          onSave={(v) => {
+                            const p = parseMoney(v);
+                            if (Number.isFinite(p) && p >= 0) act({ action: "item_update", id: i.id, patch: { unit_cost: p } });
+                          }}
+                        />
+                      </div>
+                      {i.price > 0 && i.unit_cost > 0 && (
+                        <span className="dm text-[var(--hob-faint)]">רווח ליחידה {ILS(i.price - i.unit_cost)}</span>
+                      )}
                     </div>
                   )}
                   {isOpen &&
@@ -746,9 +794,8 @@ export function SeedingView({
                             style={{ borderInlineStart: "5px solid #e6e9f2" }}
                           >
                             <div className="flex items-center gap-1.5 border-e border-[var(--hob-rule)] ps-7 text-[13px]">
-                              <span>
-                                {l.icon} {l.label}
-                              </span>
+                              <LocDot loc={l.key} />
+                              <span>{l.label}</span>
                             </div>
                             {BUCKETS.map((b) => (
                               <div key={b.col} className="border-e border-[var(--hob-rule)]">
@@ -765,16 +812,23 @@ export function SeedingView({
                                 />
                               </div>
                             ))}
-                            <div className="flex items-center justify-center border-e border-[var(--hob-rule)] font-medium text-[var(--hob-soft)]">
+                            <div className="dm flex items-center justify-center border-e border-[var(--hob-rule)] font-medium text-[var(--hob-soft)]">
                               {rowTotal(row)}
                             </div>
-                            <div className="col-span-3 flex items-center justify-center border-e border-[var(--hob-rule)]">
+                            <div className="col-span-3 flex items-center justify-center gap-1 border-e border-[var(--hob-rule)]">
                               <button
                                 type="button"
                                 onClick={() => toggle(tk)}
                                 className="rounded px-1.5 py-0.5 text-[11.5px] text-[var(--hob-accent)] hover:bg-[var(--hob-hover)]"
                               >
                                 העברה ⇄
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggle(`rc:${i.id}:${l.key}`)}
+                                className="rounded px-1.5 py-0.5 text-[11.5px] text-[var(--hob-good)] hover:bg-[var(--hob-hover)]"
+                              >
+                                ＋ הוספה
                               </button>
                             </div>
                             <div />
@@ -797,6 +851,17 @@ export function SeedingView({
                               />
                             </div>
                           )}
+                          {expanded[`rc:${i.id}:${l.key}`] && (
+                            <div className="border-t border-[var(--hob-hover)] bg-[var(--hob-bg2)] py-1.5 pe-2 ps-8">
+                              <ReceiveInline
+                                at={l.key}
+                                onReceive={(size, qty) => {
+                                  act({ action: "stock_receive", id: i.id, location: l.key, size, qty });
+                                  toggle(`rc:${i.id}:${l.key}`);
+                                }}
+                              />
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -805,7 +870,7 @@ export function SeedingView({
                 })}
               </div>
             ))}
-            <AddItemRow onAdd={(name, size, qty) => act({ action: "item_add", name, size, qty })} />
+            <AddItemRow collections={collectionKeys} onAdd={(it) => act({ action: "item_add", ...it })} />
           </div>
         </div>
       </section>
@@ -816,11 +881,11 @@ export function SeedingView({
           className="mb-1.5 flex items-center gap-2 text-base font-semibold"
           style={{ color: GIFT_COLOR }}
         >
-          🎁 יומן חלוקות
+          🎁 מתנות
           <span className="text-xs font-normal text-[var(--hob-faint)]">
             {gifts.length > 0
               ? [
-                  `${giftGroups.length} חלוקות · ${gifts.length} פריטים`,
+                  `${giftGroups.length} מקבלים · ${gifts.length} פריטים`,
                   ...(() => {
                     const byStatus = (st: string) =>
                       giftGroups.filter((g) => (g.rows[0].status || "promised") === st).length;
@@ -834,7 +899,7 @@ export function SeedingView({
                     return parts;
                   })(),
                 ].join(" · ")
-              : "כל מי שקיבל מוצר יופיע כאן"}
+              : "מתנות למשפיעניות ולחברים יורדות מהמלאי ונרשמות כאן"}
           </span>
         </div>
 
@@ -1162,13 +1227,16 @@ export function SeedingView({
         )}
       </section>
 
-      {/* Manual sales (until Shopify is live) */}
+      {/* Orders + sales ledger */}
       <section className="mb-7">
         <div
           className="mb-1.5 flex items-center gap-2 text-base font-semibold"
           style={{ color: SALE_COLOR }}
         >
           🛒 מכירות
+          <a href="/api/seeding?export=sales" className="text-[11.5px] font-normal text-[var(--hob-faint)] hover:text-[var(--hob-accent)]" title="הורדת יומן המכירות כקובץ CSV">
+            ⬇ CSV
+          </a>
           <button
             type="button"
             onClick={() => setPopupOpen(true)}
@@ -1195,11 +1263,13 @@ export function SeedingView({
                     return parts;
                   })(),
                 ].join(" · ")
-              : "רישום ידני עד שהחנות בשופיפיי תעלה"}
+              : "הזמנות מהחנות נכנסות לבד; מכירה פנים אל פנים רושמים כאן"}
           </span>
         </div>
 
-        <AddSaleForm items={items} onAdd={(s) => act({ action: "sale_add", ...s, note: "" })} />
+        <OrdersPanel sales={sales} act={act} />
+
+        <AddSaleForm items={items} actor={actor} onAdd={(s) => act({ action: "sale_add", ...s, note: "" })} />
 
         {/* Mobile: one card per buyer+date, item lines inside */}
         <div className="space-y-2 sm:hidden">
@@ -1280,6 +1350,21 @@ export function SeedingView({
                     />
                   </div>
                 </div>
+                <div className="mt-1 flex items-center gap-2 px-3 text-[12px] text-[var(--hob-soft)]">
+                  <span title="מאיפה ירד המלאי">
+                    <LocDot loc={first.location} /> {locationMeta(first.location).label}
+                  </span>
+                  <span>· טיפלה:</span>
+                  <div className="w-24">
+                    <PillCell
+                      value={first.handled_by || ""}
+                      vocab={HANDLED_BY}
+                      order={HANDLED_BY_ORDER}
+                      rounded
+                      onChange={(v) => act({ action: "sale_update", ids, patch: { handled_by: v } })}
+                    />
+                  </div>
+                </div>
                 <div className="mt-1 divide-y divide-[var(--hob-hover)] rounded-md border border-[var(--hob-rule)]">
                   {rows.map((s) => (
                     <div key={s.id} className="flex items-center gap-1.5 ps-2">
@@ -1335,9 +1420,9 @@ export function SeedingView({
         {/* Desktop: table */}
         {sales.length > 0 && (
           <div className="hidden overflow-x-auto rounded-lg border border-[var(--hob-rule-strong)] shadow-sm sm:block">
-            <div className="min-w-[1070px]">
+            <div className="min-w-[1170px]">
               <div
-                className="grid grid-cols-[minmax(150px,1.3fr)_minmax(170px,1.4fr)_70px_64px_110px_100px_116px_112px_minmax(130px,1fr)_44px] border-b border-[var(--hob-rule-strong)] bg-[var(--hob-bg2)] text-center text-[13px] font-medium text-[var(--hob-soft)]"
+                className="grid grid-cols-[minmax(150px,1.3fr)_minmax(170px,1.4fr)_70px_64px_110px_100px_116px_112px_96px_minmax(130px,1fr)_44px] border-b border-[var(--hob-rule-strong)] bg-[var(--hob-bg2)] text-center text-[13px] font-medium text-[var(--hob-soft)]"
                 style={{ borderInlineStart: "5px solid transparent" }}
               >
                 <div className="border-e border-[var(--hob-rule)] py-2 ps-3 text-start">קונה</div>
@@ -1348,6 +1433,7 @@ export function SeedingView({
                 <div className="border-e border-[var(--hob-rule)] py-2">סה״כ</div>
                 <div className="border-e border-[var(--hob-rule)] py-2">משלוח</div>
                 <div className="border-e border-[var(--hob-rule)] py-2">תשלום</div>
+                <div className="border-e border-[var(--hob-rule)] py-2" title="מי טיפלה במכירה">טיפלה</div>
                 <div className="border-e border-[var(--hob-rule)] py-2 ps-3 text-start">הערות</div>
                 <div />
               </div>
@@ -1381,7 +1467,7 @@ export function SeedingView({
                     className="border-b border-[var(--hob-rule)] last:border-b-0"
                   >
                     <div
-                      className="group grid grid-cols-[minmax(150px,1.3fr)_minmax(170px,1.4fr)_70px_64px_110px_100px_116px_112px_minmax(130px,1fr)_44px] items-stretch bg-[var(--hob-surface)] text-sm text-[var(--hob-ink)]"
+                      className="group grid grid-cols-[minmax(150px,1.3fr)_minmax(170px,1.4fr)_70px_64px_110px_100px_116px_112px_96px_minmax(130px,1fr)_44px] items-stretch bg-[var(--hob-surface)] text-sm text-[var(--hob-ink)]"
                       style={{ borderInlineStart: `5px solid ${SALE_COLOR}` }}
                     >
                       <div className="border-e border-[var(--hob-rule)]">
@@ -1496,6 +1582,14 @@ export function SeedingView({
                         />
                       </div>
                       <div className="border-e border-[var(--hob-rule)]">
+                        <PillCell
+                          value={first.handled_by || ""}
+                          vocab={HANDLED_BY}
+                          order={HANDLED_BY_ORDER}
+                          onChange={(v) => act({ action: "sale_update", ids, patch: { handled_by: v } })}
+                        />
+                      </div>
+                      <div className="border-e border-[var(--hob-rule)]">
                         <NoteCell
                           value={first.note}
                           placeholder="＋ הערה"
@@ -1520,7 +1614,8 @@ export function SeedingView({
                             key={s.id}
                             className="flex items-center gap-2 border-t border-[var(--hob-hover)] py-1 pe-2 ps-8"
                           >
-                            <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--hob-ink)]">
+                            <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-[var(--hob-ink)]">
+                              <LocDot loc={s.location} />
                               {s.item_label}
                             </span>
                             <div className="w-20 shrink-0 rounded-md border border-[var(--hob-rule)] bg-[var(--hob-surface)]">

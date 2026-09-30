@@ -1,6 +1,7 @@
 import { beforeEach, expect, test } from "vitest";
 import { freshDb } from "./d1";
 import { flushHeldOrders, morningDigest, notify, setNotifyConfig } from "../src/lib/notify.server";
+import { fireDueReminders } from "../src/lib/reminders.server";
 
 let db: ReturnType<typeof freshDb>;
 const env = () => ({ DB: db as never });
@@ -15,9 +16,13 @@ test("night orders wait for the morning digest", async () => {
   const r = await notify(env(), { level: "now", topic: "order", isOrder: true, title: "💸 הזמנה חדשה #1101 · 199 ₪", body: "דנה" }, day(23));
   expect(r).toEqual({ status: "held", reason: "quiet_hours" });
   expect(await pushes()).toBe(0);
-  const d = await morningDigest(env(), { openDecisions: 0, topQuestion: "" }, day(5, 1));
+  const d = await morningDigest(env(), {}, day(5, 1));
   expect(d.sent).toBe(true);
   expect(await pushes()).toBe(1);
+  // The digest is a note in Hobi's thread, never model history.
+  const note = await db.prepare("SELECT kind, content FROM assistant_chat ORDER BY id DESC LIMIT 1").first<{ kind: string; content: string }>();
+  expect(note?.kind).toBe("note");
+  expect(note?.content).toContain("בוקר טוב");
 });
 
 test("the daily cap holds the fourth alert, orders are not counted", async () => {
@@ -46,10 +51,28 @@ test("orders minutes apart become one alert that covers all of them", async () =
 });
 
 test("silent items never push, a switched-off level drops, a quiet day sends nothing", async () => {
-  expect((await notify(env(), { level: "silent", topic: "run", title: "דוח עובד" }, day(9))).status).toBe("logged");
+  expect((await notify(env(), { level: "silent", topic: "run", title: "דוח" }, day(9))).status).toBe("logged");
   await setNotifyConfig(db as never, { levels: { now: false, morning: true, weekly: true } });
   expect(await notify(env(), { level: "now", topic: "x", title: "x" }, day(9))).toEqual({ status: "dropped", reason: "level_off" });
   expect(await pushes()).toBe(0);
-  expect((await morningDigest(env(), { openDecisions: 0, topQuestion: "" }, day(5))).sent).toBe(false);
+  expect((await morningDigest(env(), {}, day(5))).sent).toBe(false);
   expect(await pushes()).toBe(0);
+});
+
+test("the default push url opens Hobi's tab", async () => {
+  await notify(env(), { level: "now", topic: "brief", title: "תדריך" }, day(9));
+  const row = await db.prepare("SELECT url FROM push_outbox ORDER BY id DESC LIMIT 1").first<{ url: string }>();
+  expect(row?.url).toBe("/?tab=hobi");
+  const log = await db.prepare("SELECT url FROM notify_log ORDER BY id DESC LIMIT 1").first<{ url: string }>();
+  expect(log?.url).toBe("/?tab=hobi");
+});
+
+test("a due reminder lands in the thread as a note and is fired once", async () => {
+  await db.prepare("INSERT INTO reminders (chat_id, fire_at, text) VALUES (1, '2020-01-01T00:00:00.000Z', 'להתקשר לספקית')").run();
+  await fireDueReminders(env());
+  await fireDueReminders(env());
+  const notes = await db.prepare("SELECT COUNT(*) AS n FROM assistant_chat WHERE kind = 'note' AND content LIKE '%להתקשר לספקית%'").first<{ n: number }>();
+  expect(notes?.n).toBe(1);
+  const left = await db.prepare("SELECT COUNT(*) AS n FROM reminders WHERE done = 0").first<{ n: number }>();
+  expect(left?.n).toBe(0);
 });
